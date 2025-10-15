@@ -4,20 +4,17 @@ A modular, high-performance cryptocurrency exchange platform built with Rust. mE
 
 ## Overview
 
-mExchange will be a full exchange architecture where each component handles a specific responsibility. This repository currently contains the foundation: a high-performance matching engine library.
+mExchange is a full exchange architecture where each component handles a specific responsibility. This repository currently contains the foundation - a high-performance matching engine library.
 
-**Current Status:** Foundation phase - Core matching engine library complete
-
-**Vision:** Complete exchange platform with modular services for matching, risk management, settlement, market data, and administration
+The matching engine is complete. Future components will include risk management, settlement, market data distribution, and administration services.
 
 ## Architecture Philosophy
 
 Microservices-inspired design where each component is an independent Rust crate:
-- Independent scaling
+- Independent scaling and deployment
 - Fault isolation
 - Technology flexibility
 - Clear boundaries
-- Independent deployment
 
 ## Components
 
@@ -55,26 +52,20 @@ Administrative interface and monitoring. Provides trading controls, user managem
 
 ## Design Philosophy
 
-### Pure Matching Engine
+### Separation of Concerns
 
-The matching engine handles matching only - no validation, balance checks, risk management, networking, or persistence. This separation allows:
-- Maximum throughput (validation happens upstream)
-- Simple, testable, focused code
-- Reusable across contexts (spot, futures, options)
+Each component has a single, well-defined responsibility. The matching engine handles order matching, risk engine handles validation, gateway handles client connections. This separation enables independent scaling, testing, and deployment.
 
 ### Performance First
 
-- Zero-allocation hot paths where possible
-- Early returns to minimize branching
-- Idiomatic Rust for compiler optimizations
-- Comprehensive benchmarking
+Built for high-throughput, low-latency trading. Critical paths are optimized for minimal allocations and maximum efficiency. Rust's zero-cost abstractions and ownership system ensure memory safety without runtime overhead.
 
 ### Code Standards
 
 - Comprehensive test coverage
+- Clean, idiomatic Rust
 - Minimal comments (explain why not what)
-- Early returns over nested conditionals
-- Clean output
+- Benchmark-driven optimization
 
 ## Getting Started
 
@@ -135,14 +126,6 @@ rust_decimal = "1.35"
 - `spread() -> Option<Price>`
 - `quantity_at_price(side, price) -> Quantity`
 
-### Code Style
-
-- Early returns over nested if/else
-- Comments explain why not what
-- Idiomatic Rust
-- Clean output
-
-
 ## Architecture Decisions
 
 ### Why Separate Binaries?
@@ -170,48 +153,4 @@ Contributions are welcome! Please:
 
 ## License
 
-MIT OR Apache-2.0
-
-## Roadmap
-
-**Phase 1: Foundation (Complete)**
-- Core matching engine implementation
-- Price-time priority matching
-- Partial fills across levels
-- High-precision decimal support
-- Comprehensive test suite (28 tests)
-- Performance benchmarks
-
-**Phase 2: Networking Layer**
-- Network interface for order submission
-- Order state management
-- Trade publication
-- Integration tests
-
-**Phase 3: Gateway**
-- WebSocket server
-- REST API
-- Authentication integration
-- Rate limiting
-
-**Phase 4: Risk & Settlement**
-- Risk engine service
-- Balance management
-- Settlement service
-- Ledger system
-
-**Phase 5: Market Data**
-- Real-time data streaming
-- Historical data storage
-- OHLCV aggregation
-- Market data APIs
-
-**Phase 6: Operations**
-- Admin dashboard
-- Monitoring and alerting
-- Deployment configurations
-- Load testing framework
-
-## Contact
-
-For questions or collaboration, please open an issue on GitHub.
+MIT

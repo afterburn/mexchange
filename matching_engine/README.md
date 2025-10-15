@@ -155,4 +155,4 @@ All 28 tests cover:
 
 ## License
 
-MIT OR Apache-2.0
+MIT
