@@ -86,11 +86,14 @@ async fn request_otp(
             (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: "Failed to create OTP".into() }))
         })?;
 
-    // TODO: Send email with OTP code
-    // For now, log it to console
-    tracing::info!("========================================");
-    tracing::info!("OTP for {}: {}", email, otp.code);
-    tracing::info!("========================================");
+    // Send OTP via configured mail provider
+    if let Err(e) = state.mail.send_otp(&email, &otp.code).await {
+        tracing::error!("Failed to send OTP email: {}", e);
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: "Failed to send OTP".into() }),
+        ));
+    }
 
     Ok(Json(RequestOtpResponse {
         message: "OTP sent to your email".into(),

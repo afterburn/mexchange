@@ -121,6 +121,12 @@ jobs:
           DATABASE_URL=${{ secrets.DATABASE_URL }}
           JWT_SECRET=${{ secrets.JWT_SECRET }}
           ENVIRONMENT=production
+          MAIL_PROVIDER=${{ vars.MAIL_PROVIDER }}
+          SMTP_HOST=${{ secrets.SMTP_HOST }}
+          SMTP_PORT=${{ vars.SMTP_PORT }}
+          SMTP_USERNAME=${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM=${{ vars.SMTP_FROM }}
           ENVFILE
           sudo chmod 600 /etc/mexchange.env
 

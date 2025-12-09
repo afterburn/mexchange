@@ -83,6 +83,15 @@ services:
       JWT_SECRET: change-this-in-production
       BIND_ADDR: 0.0.0.0:3001
       ENVIRONMENT: development
+      # Mail provider: "console" (logs OTP to stdout) or "smtp"
+      MAIL_PROVIDER: console
+      # Uncomment for SMTP:
+      # MAIL_PROVIDER: smtp
+      # SMTP_HOST: smtp.example.com
+      # SMTP_PORT: 587
+      # SMTP_USERNAME: your-username
+      # SMTP_PASSWORD: your-password
+      # SMTP_FROM: noreply@example.com
     ports:
       - "3001:3001"
     healthcheck:

@@ -67,9 +67,13 @@ async fn main() -> anyhow::Result<()> {
     // Spawn the midnight cleanup task
     accounts::scheduler::spawn_cleanup_task(pool.clone());
 
+    // Create mail service
+    let mail = accounts::mail::create_mail_service();
+
     let state = AppState {
         pool,
         jwt_secret,
+        mail,
     };
 
     // Build router
