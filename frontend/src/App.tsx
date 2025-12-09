@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import MarketStats from './components/MarketStats';
 import PriceChart from './components/PriceChart';
 import DepthChart from './components/DepthChart';
@@ -26,6 +26,8 @@ const DEFAULT_BALANCE = { eur: 0, kcn: 0 };
 const TOKEN_REFRESH_INTERVAL = 10 * 60 * 1000;
 
 function App() {
+  const [searchParams] = useSearchParams();
+  const isEmbed = searchParams.has('embed');
   const { user, balances, fetchBalances, logout, refreshToken } = useAuthStore();
 
   const [chartView, setChartView] = useState<ChartView>('price');
@@ -296,13 +298,18 @@ function App() {
     <ErrorBoundary>
       <ToastContainer />
       <div className="flex flex-col h-screen bg-black text-white overflow-hidden">
-        {/* Top Navigation Bar */}
-        <div className="flex items-center justify-between px-4 h-9 border-b border-white/10 shrink-0">
-          <button className="flex items-center gap-2 text-xs text-white/60 hover:text-white transition-colors">
-            <span>&larr;</span>
-            <span>Back to projects</span>
-          </button>
-        </div>
+        {/* Top Navigation Bar - only shown when embedded */}
+        {isEmbed && (
+          <div className="flex items-center justify-between px-4 h-9 border-b border-white/10 shrink-0">
+            <a
+              href="https://kevin.rs/projects"
+              className="flex items-center gap-2 text-xs text-white/60 hover:text-white transition-colors"
+            >
+              <span>&larr;</span>
+              <span>Back to projects</span>
+            </a>
+          </div>
+        )}
 
         {/* Auth Bar */}
         <div className="flex items-center justify-between px-4 h-8 border-b border-white/10 shrink-0">

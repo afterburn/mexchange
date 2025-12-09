@@ -40,15 +40,71 @@ See `.github/workflows/deploy.yml` for EC2 deployment via GitHub Actions.
 ## Architecture
 
 ```
-Frontend (React) --> Gateway (Axum) <--UDP--> Matching Engine Service
-                         |                         |
-                         v                         v
-                    Accounts Service ---------> PostgreSQL
+                                    ┌─────────────────────────────────────────┐
+                                    │            Matching Engine              │
+                                    │              Service                    │
+                                    │  ┌───────────────────────────────────┐  │
+   ┌──────────────┐                 │  │  matching_engine (lib)            │  │
+   │   Frontend   │   WebSocket     │  │  - BTreeMap price levels          │  │
+   │    React     │◄───────────────►│  │  - HashMap O(1) order lookup      │  │
+   │   Vite/TS    │                 │  │  - Price-time priority            │  │
+   └──────────────┘                 │  └───────────────────────────────────┘  │
+          │                         └─────────────────────────────────────────┘
+          │ HTTP                                   ▲
+          ▼                                        │ UDP + FlatBuffers
+   ┌──────────────┐                                │ (orders, fills, events)
+   │   Gateway    │◄───────────────────────────────┘
+   │    Axum      │
+   │  Port 3000   │────────────────┐
+   └──────────────┘                │
+          │                        │ HTTP (settlement, auth)
+          │ HTTP                   │
+          ▼                        ▼
+   ┌──────────────┐         ┌──────────────┐
+   │   Accounts   │◄───────►│  PostgreSQL  │
+   │   Service    │         │              │
+   │  Port 3001   │         └──────────────┘
+   └──────────────┘
 ```
 
-### Custom UDP Protocol
+### Why UDP + FlatBuffers?
 
-Inter-service communication between the gateway and matching engine uses a custom FlatBuffers-based UDP protocol (`udp_proto/`) for minimal latency. This avoids HTTP overhead for the critical order/event path while maintaining type safety.
+The critical order path (order submission → matching → fill notification) uses UDP with FlatBuffers serialization instead of HTTP/JSON for several reasons:
+
+**UDP over TCP/HTTP:**
+- No connection handshake overhead (3-way TCP handshake adds ~1.5 RTT)
+- No head-of-line blocking - each datagram is independent
+- No Nagle's algorithm delays (though TCP_NODELAY helps)
+- Smaller packet overhead (8-byte UDP header vs 20+ byte TCP header)
+- For co-located services on reliable networks, TCP's reliability guarantees add unnecessary latency
+
+**FlatBuffers over JSON/Protobuf:**
+- Zero-copy deserialization - access fields directly from the buffer without parsing
+- No memory allocation during read - critical for avoiding GC pauses
+- Strongly typed with code generation - catches schema mismatches at compile time
+- ~10-100x faster than JSON parsing, ~2-10x faster than Protobuf
+- Fixed schema evolution rules prevent accidental breaking changes
+
+**Trade-offs:**
+- UDP is unreliable - we accept this for the hot path since the gateway can retry/reconcile
+- FlatBuffers has a learning curve and requires schema compilation
+- Debugging is harder than plaintext JSON
+
+For non-latency-critical paths (auth, settlement, balance queries), we use standard HTTP/JSON.
+
+### Current Limitations
+
+The current architecture has several limitations that would need to be addressed for production scale:
+
+1. **Single matching engine instance** - The matching engine runs as a single process. While it handles 5M+ orders/sec, horizontal scaling would require order routing/sharding by symbol.
+
+2. **No message queue** - Services communicate directly. Adding Kafka/NATS would provide durability, replay capability, and better decoupling.
+
+3. **Coupled settlement** - Settlement happens synchronously in the accounts service. A dedicated settlement service with its own transaction log would be more robust.
+
+4. **Limited observability** - Basic logging only. Production would need distributed tracing (Jaeger), metrics (Prometheus), and alerting.
+
+5. **No redundancy** - Single points of failure throughout. Would need leader election, hot standbys, and automated failover.
 
 ### Component Responsibilities
 
@@ -100,14 +156,40 @@ cargo test --manifest-path matching_engine/Cargo.toml
 cargo test --manifest-path accounts/Cargo.toml
 ```
 
-## Target Architecture (WIP)
+## Roadmap
+
+### Multiple Markets & Custom Pairs
+
+Currently the exchange supports a single hardcoded trading pair (KCN/EUR). Planned improvements:
+
+- **Dynamic market creation** - API to create new trading pairs with configurable tick size, lot size, and trading hours
+- **Market registry service** - Central registry of available markets with metadata (fees, limits, status)
+- **Per-market matching engines** - Each market runs in its own matching engine instance, enabling horizontal scaling
+- **Symbol routing** - Gateway routes orders to the appropriate matching engine based on symbol
+- **Cross-margin support** - Use collateral from one asset to trade multiple pairs
+
+### Derivatives Support
+
+The current spot-only implementation could be extended to support derivatives:
+
+- **Perpetual futures** - No-expiry contracts with funding rate mechanism to anchor to spot price
+- **Mark price oracle** - External price feeds to prevent manipulation and calculate unrealized PnL
+- **Liquidation engine** - Monitor positions and trigger liquidations when margin falls below maintenance level
+- **Insurance fund** - Socialize losses from liquidations that can't be filled at bankruptcy price
+- **Position management** - Track open positions, leverage, margin requirements per user
+- **Funding rate calculation** - Periodic payments between longs and shorts based on premium/discount to spot
+
+This would require significant additions: a risk engine for pre-trade margin checks, position tracking in the accounts service, and oracle integration for mark prices.
+
+### Target Architecture
 
 The intended architecture includes additional components not yet fully implemented:
 
-- **risk_engine** - Pre-trade risk validation
-- **settlement** - Dedicated post-trade settlement service
+- **risk_engine** - Pre-trade risk validation, margin checks, position limits
+- **settlement** - Dedicated post-trade settlement service with transaction log
 - **admin** - Administrative dashboard and controls
-- **Kafka** - Event streaming between services
+- **Kafka/NATS** - Event streaming between services for durability and replay
+- **Redis** - Caching layer for orderbook snapshots and session data
 
 ## Design Philosophy
 
