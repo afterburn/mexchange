@@ -10,13 +10,58 @@ env:
   DEPLOY_PATH: /opt/mexchange
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
-    environment: production
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build Rust services
+        run: |
+          cargo build --release --manifest-path gateway/Cargo.toml
+          cargo build --release --manifest-path matching_engine_service/Cargo.toml
+          cargo build --release --manifest-path accounts/Cargo.toml
+          cargo build --release --manifest-path market_data/Cargo.toml
+
+      - name: Build frontend
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-artifacts
+          path: |
+            target/release/gateway
+            target/release/matching_engine_service
+            target/release/accounts
+            target/release/market_data
+            frontend/dist/
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: deploy-artifacts
+          path: artifacts
 
       - name: Configure SSH
         run: |
@@ -33,95 +78,133 @@ jobs:
 
       - name: Deploy to EC2
         run: |
-          # Create deployment script
-          cat > deploy.sh << 'DEPLOY_SCRIPT'
-          #!/bin/bash
-          set -e
+          # Create directories on EC2
+          ssh ec2 "sudo mkdir -p ${{ env.DEPLOY_PATH }}/{bin,frontend} && sudo chown -R \$USER:\$USER ${{ env.DEPLOY_PATH }}"
 
-          DEPLOY_PATH="${DEPLOY_PATH:-/opt/mexchange}"
+          # Copy binaries
+          scp artifacts/target/release/gateway ec2:${{ env.DEPLOY_PATH }}/bin/
+          scp artifacts/target/release/matching_engine_service ec2:${{ env.DEPLOY_PATH }}/bin/
+          scp artifacts/target/release/accounts ec2:${{ env.DEPLOY_PATH }}/bin/
+          scp artifacts/target/release/market_data ec2:${{ env.DEPLOY_PATH }}/bin/
 
-          echo "==> Updating system packages..."
-          sudo apt-get update -qq
+          # Copy frontend
+          scp -r artifacts/frontend/dist/* ec2:${{ env.DEPLOY_PATH }}/frontend/
 
-          echo "==> Installing Docker if not present..."
-          if ! command -v docker &> /dev/null; then
-            curl -fsSL https://get.docker.com | sudo sh
-            sudo usermod -aG docker $USER
-          fi
+          # Make binaries executable
+          ssh ec2 "chmod +x ${{ env.DEPLOY_PATH }}/bin/*"
 
-          echo "==> Installing Docker Compose if not present..."
-          if ! command -v docker-compose &> /dev/null; then
-            sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-            sudo chmod +x /usr/local/bin/docker-compose
-          fi
-
-          echo "==> Creating deployment directory..."
-          sudo mkdir -p $DEPLOY_PATH
-          sudo chown $USER:$USER $DEPLOY_PATH
-
-          echo "==> Syncing code..."
-          cd $DEPLOY_PATH
-
-          if [ -d ".git" ]; then
-            git fetch origin
-            git reset --hard origin/master
-          else
-            git clone $REPO_URL .
-          fi
-
-          echo "==> Creating production environment file..."
-          cat > .env << ENV_FILE
-          # Production environment
-          DATABASE_URL=$DATABASE_URL
-          JWT_SECRET=$JWT_SECRET
+      - name: Create systemd services
+        run: |
+          ssh ec2 << 'EOF'
+          # Create environment file
+          sudo tee /etc/mexchange.env > /dev/null << ENVFILE
+          DATABASE_URL=${{ secrets.DATABASE_URL }}
+          JWT_SECRET=${{ secrets.JWT_SECRET }}
           ENVIRONMENT=production
-          ENV_FILE
+          ENVFILE
+          sudo chmod 600 /etc/mexchange.env
 
-          echo "==> Stopping existing services..."
-          sudo docker-compose down --remove-orphans || true
+          # Accounts service
+          sudo tee /etc/systemd/system/mexchange-accounts.service > /dev/null << SERVICE
+          [Unit]
+          Description=Mexchange Accounts Service
+          After=network.target
 
-          echo "==> Pruning old images..."
-          sudo docker image prune -f
+          [Service]
+          Type=simple
+          EnvironmentFile=/etc/mexchange.env
+          Environment=BIND_ADDR=0.0.0.0:3001
+          ExecStart=/opt/mexchange/bin/accounts
+          Restart=always
+          RestartSec=5
 
-          echo "==> Building and starting services..."
-          sudo docker-compose up -d --build
+          [Install]
+          WantedBy=multi-user.target
+          SERVICE
 
-          echo "==> Waiting for services to be healthy..."
-          sleep 30
+          # Matching Engine service
+          sudo tee /etc/systemd/system/mexchange-matching-engine.service > /dev/null << SERVICE
+          [Unit]
+          Description=Mexchange Matching Engine Service
+          After=network.target mexchange-accounts.service
 
-          echo "==> Checking service status..."
-          sudo docker-compose ps
+          [Service]
+          Type=simple
+          EnvironmentFile=/etc/mexchange.env
+          Environment=BIND_ADDR=0.0.0.0:8080
+          Environment=ORDER_RECEIVER_BIND=0.0.0.0:9100
+          Environment=GATEWAY_EVENT_ADDR=127.0.0.1:9101
+          Environment=EVENT_SENDER_BIND=0.0.0.0:9103
+          Environment=SYMBOL=KCN/EUR
+          Environment=ACCOUNTS_URL=http://127.0.0.1:3001
+          ExecStart=/opt/mexchange/bin/matching_engine_service
+          Restart=always
+          RestartSec=5
 
-          echo "==> Deployment complete!"
-          DEPLOY_SCRIPT
+          [Install]
+          WantedBy=multi-user.target
+          SERVICE
 
-          # Copy and execute deploy script
-          scp deploy.sh ec2:/tmp/deploy.sh
-          ssh ec2 "DEPLOY_PATH=${{ env.DEPLOY_PATH }} \
-            REPO_URL=${{ github.server_url }}/${{ github.repository }}.git \
-            DATABASE_URL=${{ secrets.DATABASE_URL }} \
-            JWT_SECRET=${{ secrets.JWT_SECRET }} \
-            bash /tmp/deploy.sh"
+          # Gateway service
+          sudo tee /etc/systemd/system/mexchange-gateway.service > /dev/null << SERVICE
+          [Unit]
+          Description=Mexchange Gateway Service
+          After=network.target mexchange-matching-engine.service
+
+          [Service]
+          Type=simple
+          EnvironmentFile=/etc/mexchange.env
+          Environment=BIND_ADDR=0.0.0.0:3000
+          Environment=MATCHING_ENGINE_UDP_ADDR=127.0.0.1:9100
+          Environment=ORDER_SENDER_BIND=0.0.0.0:9102
+          Environment=EVENT_RECEIVER_BIND=0.0.0.0:9101
+          Environment=ACCOUNTS_URL=http://127.0.0.1:3001
+          ExecStart=/opt/mexchange/bin/gateway
+          Restart=always
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+          SERVICE
+
+          # Market Data service
+          sudo tee /etc/systemd/system/mexchange-market-data.service > /dev/null << SERVICE
+          [Unit]
+          Description=Mexchange Market Data Service
+          After=network.target mexchange-gateway.service
+
+          [Service]
+          Type=simple
+          EnvironmentFile=/etc/mexchange.env
+          Environment=BIND_ADDR=0.0.0.0:3002
+          Environment=GATEWAY_WS_URL=ws://127.0.0.1:3000/ws
+          ExecStart=/opt/mexchange/bin/market_data
+          Restart=always
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+          SERVICE
+
+          sudo systemctl daemon-reload
+          EOF
+
+      - name: Restart services
+        run: |
+          ssh ec2 << 'EOF'
+          sudo systemctl enable mexchange-accounts mexchange-matching-engine mexchange-gateway mexchange-market-data
+          sudo systemctl restart mexchange-accounts
+          sleep 3
+          sudo systemctl restart mexchange-matching-engine
+          sleep 3
+          sudo systemctl restart mexchange-gateway
+          sleep 3
+          sudo systemctl restart mexchange-market-data
+          EOF
 
       - name: Health check
         run: |
-          echo "Waiting for services to start..."
           sleep 10
-
-          # Check gateway health
-          ssh ec2 "curl -sf http://localhost:3000/health || exit 1"
-          echo "Gateway is healthy"
-
-          # Check matching engine health
-          ssh ec2 "curl -sf http://localhost:8080/health || exit 1"
-          echo "Matching Engine is healthy"
-
-          # Check accounts health
-          ssh ec2 "curl -sf http://localhost:3001/health || exit 1"
-          echo "Accounts service is healthy"
-
-      - name: Notify on failure
-        if: failure()
-        run: |
-          echo "Deployment failed! Check the logs above for details."
-          # Add Slack/Discord notification here if needed
+          ssh ec2 "curl -sf http://localhost:3001/health" && echo "Accounts is healthy"
+          ssh ec2 "curl -sf http://localhost:8080/health" && echo "Matching Engine is healthy"
+          ssh ec2 "curl -sf http://localhost:3000/health" && echo "Gateway is healthy"
