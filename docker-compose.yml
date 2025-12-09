@@ -1,0 +1,119 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: accounts
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  matching-engine-service:
+    build:
+      context: .
+      dockerfile: matching_engine_service/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      accounts:
+        condition: service_healthy
+    environment:
+      # UDP transport config
+      ORDER_RECEIVER_BIND: 0.0.0.0:9100
+      GATEWAY_EVENT_ADDR: gateway:9101
+      EVENT_SENDER_BIND: 0.0.0.0:9103
+      SYMBOL: KCN/EUR
+      BIND_ADDR: 0.0.0.0:8080
+      # Settlement config
+      ACCOUNTS_URL: http://accounts:3001
+    ports:
+      - "8080:8080"
+      - "9100:9100/udp"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  gateway:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    depends_on:
+      accounts:
+        condition: service_healthy
+      matching-engine-service:
+        condition: service_healthy
+    environment:
+      # UDP transport config
+      MATCHING_ENGINE_UDP_ADDR: matching-engine-service:9100
+      ORDER_SENDER_BIND: 0.0.0.0:9102
+      EVENT_RECEIVER_BIND: 0.0.0.0:9101
+      ACCOUNTS_URL: http://accounts:3001
+      BIND_ADDR: 0.0.0.0:3000
+    ports:
+      - "3000:3000"
+      - "9101:9101/udp"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  accounts:
+    build:
+      context: .
+      dockerfile: accounts/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/accounts
+      JWT_SECRET: change-this-in-production
+      BIND_ADDR: 0.0.0.0:3001
+      ENVIRONMENT: development
+    ports:
+      - "3001:3001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  market-data:
+    build:
+      context: .
+      dockerfile: market_data/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      gateway:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/accounts
+      # Will subscribe to gateway WebSocket for events
+      GATEWAY_WS_URL: ws://gateway:3000/ws
+      BIND_ADDR: 0.0.0.0:3002
+    ports:
+      - "3002:3002"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  postgres_data:

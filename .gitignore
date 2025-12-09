@@ -1,0 +1,42 @@
+# Rust
+**/target/
+Cargo.lock
+!matching_engine/Cargo.lock
+
+# Node.js
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Editor/IDE
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS
+.DS_Store
+Thumbs.db
+
+# WASM build output
+frontend/src/wasm/
+frontend/trading-bot-wasm/target/
+frontend/trading-bot-wasm/pkg/
+
+# Docker
+docker-compose.override.yml

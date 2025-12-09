@@ -1,0 +1,24 @@
+{
+  "name": "mexchange-e2e-tests",
+  "version": "1.0.0",
+  "description": "End-to-end integration tests for mexchange",
+  "type": "module",
+  "scripts": {
+    "test": "tsx src/run-tests.ts",
+    "test:quick": "tsx src/run-tests.ts --quick",
+    "test:verbose": "tsx src/run-tests.ts --verbose",
+    "test:settlement": "tsx src/run-settlement-only.ts",
+    "test:full-flow": "tsx src/run-full-flow.ts"
+  },
+  "dependencies": {
+    "@types/pg": "^8.15.6",
+    "pg": "^8.16.3",
+    "ws": "^8.14.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/ws": "^8.5.10",
+    "tsx": "^4.6.0",
+    "typescript": "^5.3.0"
+  }
+}

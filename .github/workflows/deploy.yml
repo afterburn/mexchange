@@ -1,0 +1,126 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+env:
+  DEPLOY_PATH: /opt/mexchange
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          cat >> ~/.ssh/config << EOF
+          Host ec2
+            HostName ${{ secrets.EC2_HOST }}
+            User ${{ secrets.EC2_USER }}
+            IdentityFile ~/.ssh/deploy_key
+            StrictHostKeyChecking no
+          EOF
+
+      - name: Deploy to EC2
+        run: |
+          # Create deployment script
+          cat > deploy.sh << 'DEPLOY_SCRIPT'
+          #!/bin/bash
+          set -e
+
+          DEPLOY_PATH="${DEPLOY_PATH:-/opt/mexchange}"
+
+          echo "==> Updating system packages..."
+          sudo apt-get update -qq
+
+          echo "==> Installing Docker if not present..."
+          if ! command -v docker &> /dev/null; then
+            curl -fsSL https://get.docker.com | sudo sh
+            sudo usermod -aG docker $USER
+          fi
+
+          echo "==> Installing Docker Compose if not present..."
+          if ! command -v docker-compose &> /dev/null; then
+            sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+            sudo chmod +x /usr/local/bin/docker-compose
+          fi
+
+          echo "==> Creating deployment directory..."
+          sudo mkdir -p $DEPLOY_PATH
+          sudo chown $USER:$USER $DEPLOY_PATH
+
+          echo "==> Syncing code..."
+          cd $DEPLOY_PATH
+
+          if [ -d ".git" ]; then
+            git fetch origin
+            git reset --hard origin/master
+          else
+            git clone $REPO_URL .
+          fi
+
+          echo "==> Creating production environment file..."
+          cat > .env << ENV_FILE
+          # Production environment
+          DATABASE_URL=$DATABASE_URL
+          JWT_SECRET=$JWT_SECRET
+          ENVIRONMENT=production
+          ENV_FILE
+
+          echo "==> Stopping existing services..."
+          sudo docker-compose down --remove-orphans || true
+
+          echo "==> Pruning old images..."
+          sudo docker image prune -f
+
+          echo "==> Building and starting services..."
+          sudo docker-compose up -d --build
+
+          echo "==> Waiting for services to be healthy..."
+          sleep 30
+
+          echo "==> Checking service status..."
+          sudo docker-compose ps
+
+          echo "==> Deployment complete!"
+          DEPLOY_SCRIPT
+
+          # Copy and execute deploy script
+          scp deploy.sh ec2:/tmp/deploy.sh
+          ssh ec2 "DEPLOY_PATH=${{ env.DEPLOY_PATH }} \
+            REPO_URL=${{ github.server_url }}/${{ github.repository }}.git \
+            DATABASE_URL=${{ secrets.DATABASE_URL }} \
+            JWT_SECRET=${{ secrets.JWT_SECRET }} \
+            bash /tmp/deploy.sh"
+
+      - name: Health check
+        run: |
+          echo "Waiting for services to start..."
+          sleep 10
+
+          # Check gateway health
+          ssh ec2 "curl -sf http://localhost:3000/health || exit 1"
+          echo "Gateway is healthy"
+
+          # Check matching engine health
+          ssh ec2 "curl -sf http://localhost:8080/health || exit 1"
+          echo "Matching Engine is healthy"
+
+          # Check accounts health
+          ssh ec2 "curl -sf http://localhost:3001/health || exit 1"
+          echo "Accounts service is healthy"
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "Deployment failed! Check the logs above for details."
+          # Add Slack/Discord notification here if needed

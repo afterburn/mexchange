@@ -1,14 +1,14 @@
-use matching_engine::{OrderBook, Side};
+use matching_engine::{OrderBook, Side, Uuid};
 use rust_decimal::Decimal;
 
 fn main() {
     let mut ob = OrderBook::new();
 
-    ob.add_limit_order(Side::Bid, Decimal::from(99), Decimal::from(100));
-    ob.add_limit_order(Side::Bid, Decimal::from(98), Decimal::from(150));
-    ob.add_limit_order(Side::Bid, Decimal::from(97), Decimal::from(200));
+    ob.add_limit_order(Uuid::new_v4(), Side::Bid, Decimal::from(99), Decimal::from(100));
+    ob.add_limit_order(Uuid::new_v4(), Side::Bid, Decimal::from(98), Decimal::from(150));
+    ob.add_limit_order(Uuid::new_v4(), Side::Bid, Decimal::from(97), Decimal::from(200));
 
-    let result = ob.add_limit_order(Side::Ask, Decimal::from(98), Decimal::from(250));
+    let result = ob.add_limit_order(Uuid::new_v4(), Side::Ask, Decimal::from(98), Decimal::from(250));
 
     let total_filled: Decimal = result.fills.iter().map(|f| f.quantity).sum();
     println!("Order {} filled {} units across {} levels", result.order_id, total_filled, result.fills.len());

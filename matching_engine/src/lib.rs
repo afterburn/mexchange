@@ -1,7 +1,8 @@
 use rust_decimal::Decimal;
 use std::collections::{BTreeMap, HashMap, VecDeque};
+pub use uuid::Uuid;
 
-pub type OrderId = u64;
+pub type OrderId = Uuid;
 
 // Decimal supports high precision needed for cryptocurrency (e.g., Bitcoin 0.00000001)
 pub type Price = Decimal;
@@ -96,6 +97,8 @@ pub struct Fill {
 pub struct OrderResult {
     pub order_id: OrderId,
     pub fills: Vec<Fill>,
+    /// Order IDs that were fully filled as a result of this order (includes the order itself if fully filled)
+    pub completed_orders: Vec<OrderId>,
 }
 
 pub struct OrderBook {
@@ -105,7 +108,6 @@ pub struct OrderBook {
     bids: BTreeMap<Price, PriceLevel>,
     asks: BTreeMap<Price, PriceLevel>,
     orders: HashMap<OrderId, Order>,
-    next_order_id: OrderId,
 }
 
 impl OrderBook {
@@ -114,38 +116,63 @@ impl OrderBook {
             bids: BTreeMap::new(),
             asks: BTreeMap::new(),
             orders: HashMap::new(),
-            next_order_id: 1,
         }
     }
 
-    pub fn next_order_id(&mut self) -> OrderId {
-        let id = self.next_order_id;
-        self.next_order_id += 1;
-        id
-    }
-
-    pub fn add_limit_order(&mut self, side: Side, price: Price, quantity: Quantity) -> OrderResult {
-        let order_id = self.next_order_id();
+    pub fn add_limit_order(
+        &mut self,
+        order_id: OrderId,
+        side: Side,
+        price: Price,
+        quantity: Quantity,
+    ) -> OrderResult {
         let mut order = Order::new_limit(order_id, side, price, quantity);
         let mut fills = Vec::new();
+        let mut completed_orders = Vec::new();
 
-        self.match_order(&mut order, &mut fills);
+        self.match_order(&mut order, &mut fills, &mut completed_orders);
 
-        if !order.is_filled() {
+        if order.is_filled() {
+            completed_orders.push(order_id);
+        } else {
             self.add_order_to_book(order.clone());
         }
 
-        OrderResult { order_id, fills }
+        OrderResult { order_id, fills, completed_orders }
     }
 
-    pub fn add_market_order(&mut self, side: Side, quantity: Quantity) -> OrderResult {
-        let order_id = self.next_order_id();
+    pub fn add_market_order(
+        &mut self,
+        order_id: OrderId,
+        side: Side,
+        quantity: Quantity,
+    ) -> OrderResult {
         let mut order = Order::new_market(order_id, side, quantity);
         let mut fills = Vec::new();
+        let mut completed_orders = Vec::new();
 
-        self.match_order(&mut order, &mut fills);
+        self.match_order(&mut order, &mut fills, &mut completed_orders);
 
-        OrderResult { order_id, fills }
+        // Market orders are always "complete" (either filled or cancelled)
+        if order.is_filled() {
+            completed_orders.push(order_id);
+        }
+
+        OrderResult { order_id, fills, completed_orders }
+    }
+
+    /// Get a reference to an order by ID (for snapshotting before matching)
+    pub fn get_order(&self, order_id: OrderId) -> Option<&Order> {
+        self.orders.get(&order_id)
+    }
+
+    /// Restore an order to the book (for rollback after failed settlement)
+    /// This re-adds the order with its current remaining_quantity
+    pub fn restore_order(&mut self, order: Order) {
+        if order.order_type == OrderType::Market || order.is_filled() {
+            return; // Can't restore market orders or fully filled orders
+        }
+        self.add_order_to_book(order);
     }
 
     pub fn cancel_order(&mut self, order_id: OrderId) -> bool {
@@ -155,6 +182,11 @@ impl OrderBook {
 
         self.remove_order_from_book(&order);
         true
+    }
+
+    /// Check if an order exists in the book (i.e., has remaining unfilled quantity)
+    pub fn order_exists(&self, order_id: OrderId) -> bool {
+        self.orders.contains_key(&order_id)
     }
 
     pub fn best_bid(&self) -> Option<Price> {
@@ -180,7 +212,26 @@ impl OrderBook {
         book.get(&price).map_or(Decimal::ZERO, |level| level.total_quantity)
     }
 
-    fn match_order(&mut self, order: &mut Order, fills: &mut Vec<Fill>) {
+    /// Returns bid price levels sorted by price descending (best bid first)
+    pub fn get_bids(&self, max_levels: usize) -> Vec<(Price, Quantity)> {
+        self.bids
+            .iter()
+            .rev() // BTreeMap is ascending, we want descending for bids
+            .take(max_levels)
+            .map(|(price, level)| (*price, level.total_quantity))
+            .collect()
+    }
+
+    /// Returns ask price levels sorted by price ascending (best ask first)
+    pub fn get_asks(&self, max_levels: usize) -> Vec<(Price, Quantity)> {
+        self.asks
+            .iter()
+            .take(max_levels)
+            .map(|(price, level)| (*price, level.total_quantity))
+            .collect()
+    }
+
+    fn match_order(&mut self, order: &mut Order, fills: &mut Vec<Fill>, completed_orders: &mut Vec<OrderId>) {
         let opposite_book = match order.side {
             Side::Bid => &mut self.asks,
             Side::Ask => &mut self.bids,
@@ -244,6 +295,8 @@ impl OrderBook {
                 fills.push(fill);
 
                 if opposite_order.is_filled() {
+                    // Track that this resting order was fully filled
+                    completed_orders.push(opposite_order.id);
                     self.orders.remove(&opposite_order.id);
                 } else {
                     level.orders.push_front(opposite_order.clone());
@@ -316,6 +369,10 @@ impl Default for OrderBook {
 mod tests {
     use super::*;
 
+    fn new_id() -> OrderId {
+        Uuid::new_v4()
+    }
+
     #[test]
     fn test_create_orderbook() {
         let ob = OrderBook::new();
@@ -326,9 +383,10 @@ mod tests {
     #[test]
     fn test_add_limit_bid() {
         let mut ob = OrderBook::new();
-        let result = ob.add_limit_order(Side::Bid, Decimal::from(100), Decimal::from(10));
+        let order_id = new_id();
+        let result = ob.add_limit_order(order_id, Side::Bid, Decimal::from(100), Decimal::from(10));
 
-        assert_eq!(result.order_id, 1);
+        assert_eq!(result.order_id, order_id);
         assert_eq!(result.fills.len(), 0);
 
         assert_eq!(ob.best_bid(), Some(Decimal::from(100)));
@@ -337,9 +395,10 @@ mod tests {
     #[test]
     fn test_add_limit_ask() {
         let mut ob = OrderBook::new();
-        let result = ob.add_limit_order(Side::Ask, Decimal::from(100), Decimal::from(10));
+        let order_id = new_id();
+        let result = ob.add_limit_order(order_id, Side::Ask, Decimal::from(100), Decimal::from(10));
 
-        assert_eq!(result.order_id, 1);
+        assert_eq!(result.order_id, order_id);
         assert_eq!(result.fills.len(), 0);
 
         assert_eq!(ob.best_ask(), Some(Decimal::from(100)));
@@ -349,9 +408,9 @@ mod tests {
     fn test_simple_match() {
         let mut ob = OrderBook::new();
 
-        ob.add_limit_order(Side::Ask, Decimal::from(100), Decimal::from(10));
+        ob.add_limit_order(new_id(), Side::Ask, Decimal::from(100), Decimal::from(10));
 
-        let result = ob.add_limit_order(Side::Bid, Decimal::from(100), Decimal::from(10));
+        let result = ob.add_limit_order(new_id(), Side::Bid, Decimal::from(100), Decimal::from(10));
 
         assert_eq!(result.fills.len(), 1);
         assert_eq!(result.fills[0].price, Decimal::from(100));
@@ -365,9 +424,9 @@ mod tests {
     fn test_partial_fill() {
         let mut ob = OrderBook::new();
 
-        ob.add_limit_order(Side::Ask, Decimal::from(100), Decimal::from(5));
+        ob.add_limit_order(new_id(), Side::Ask, Decimal::from(100), Decimal::from(5));
 
-        let result = ob.add_limit_order(Side::Bid, Decimal::from(100), Decimal::from(10));
+        let result = ob.add_limit_order(new_id(), Side::Bid, Decimal::from(100), Decimal::from(10));
 
         assert_eq!(result.fills.len(), 1);
         assert_eq!(result.fills[0].quantity, Decimal::from(5));
@@ -380,11 +439,11 @@ mod tests {
     fn test_partial_fill_across_levels() {
         let mut ob = OrderBook::new();
 
-        ob.add_limit_order(Side::Ask, Decimal::from(100), Decimal::from(5));
-        ob.add_limit_order(Side::Ask, Decimal::from(101), Decimal::from(5));
-        ob.add_limit_order(Side::Ask, Decimal::from(102), Decimal::from(5));
+        ob.add_limit_order(new_id(), Side::Ask, Decimal::from(100), Decimal::from(5));
+        ob.add_limit_order(new_id(), Side::Ask, Decimal::from(101), Decimal::from(5));
+        ob.add_limit_order(new_id(), Side::Ask, Decimal::from(102), Decimal::from(5));
 
-        let result = ob.add_limit_order(Side::Bid, Decimal::from(102), Decimal::from(12));
+        let result = ob.add_limit_order(new_id(), Side::Bid, Decimal::from(102), Decimal::from(12));
 
         assert_eq!(result.fills.len(), 3);
 
@@ -405,10 +464,10 @@ mod tests {
     fn test_market_order_buy() {
         let mut ob = OrderBook::new();
 
-        ob.add_limit_order(Side::Ask, Decimal::from(100), Decimal::from(5));
-        ob.add_limit_order(Side::Ask, Decimal::from(101), Decimal::from(5));
+        ob.add_limit_order(new_id(), Side::Ask, Decimal::from(100), Decimal::from(5));
+        ob.add_limit_order(new_id(), Side::Ask, Decimal::from(101), Decimal::from(5));
 
-        let result = ob.add_market_order(Side::Bid, Decimal::from(7));
+        let result = ob.add_market_order(new_id(), Side::Bid, Decimal::from(7));
 
         assert_eq!(result.fills.len(), 2);
         assert_eq!(result.fills[0].price, Decimal::from(100));
@@ -424,10 +483,10 @@ mod tests {
     fn test_market_order_sell() {
         let mut ob = OrderBook::new();
 
-        ob.add_limit_order(Side::Bid, Decimal::from(100), Decimal::from(5));
-        ob.add_limit_order(Side::Bid, Decimal::from(99), Decimal::from(5));
+        ob.add_limit_order(new_id(), Side::Bid, Decimal::from(100), Decimal::from(5));
+        ob.add_limit_order(new_id(), Side::Bid, Decimal::from(99), Decimal::from(5));
 
-        let result = ob.add_market_order(Side::Ask, Decimal::from(7));
+        let result = ob.add_market_order(new_id(), Side::Ask, Decimal::from(7));
 
         assert_eq!(result.fills.len(), 2);
         assert_eq!(result.fills[0].price, Decimal::from(100));
@@ -443,12 +502,12 @@ mod tests {
     fn test_cancel_order() {
         let mut ob = OrderBook::new();
 
-        let result = ob.add_limit_order(Side::Bid, Decimal::from(100), Decimal::from(10));
-        let order_id = result.order_id;
+        let order_id = new_id();
+        let result = ob.add_limit_order(order_id, Side::Bid, Decimal::from(100), Decimal::from(10));
 
         assert_eq!(ob.best_bid(), Some(Decimal::from(100)));
 
-        assert!(ob.cancel_order(order_id));
+        assert!(ob.cancel_order(result.order_id));
         assert_eq!(ob.best_bid(), None);
 
         assert!(!ob.cancel_order(order_id));
@@ -460,24 +519,23 @@ mod tests {
 
         assert_eq!(ob.spread(), None);
 
-        ob.add_limit_order(Side::Bid, Decimal::from(99), Decimal::from(10));
-        ob.add_limit_order(Side::Ask, Decimal::from(101), Decimal::from(10));
+        ob.add_limit_order(new_id(), Side::Bid, Decimal::from(99), Decimal::from(10));
+        ob.add_limit_order(new_id(), Side::Ask, Decimal::from(101), Decimal::from(10));
 
         assert_eq!(ob.spread(), Some(Decimal::from(2)));
     }
-
 
     #[test]
     fn test_price_priority() {
         let mut ob = OrderBook::new();
 
-        ob.add_limit_order(Side::Ask, Decimal::from(102), Decimal::from(5));
-        ob.add_limit_order(Side::Ask, Decimal::from(100), Decimal::from(5));
-        ob.add_limit_order(Side::Ask, Decimal::from(101), Decimal::from(5));
+        ob.add_limit_order(new_id(), Side::Ask, Decimal::from(102), Decimal::from(5));
+        ob.add_limit_order(new_id(), Side::Ask, Decimal::from(100), Decimal::from(5));
+        ob.add_limit_order(new_id(), Side::Ask, Decimal::from(101), Decimal::from(5));
 
         assert_eq!(ob.best_ask(), Some(Decimal::from(100)));
 
-        let result = ob.add_market_order(Side::Bid, Decimal::from(12));
+        let result = ob.add_market_order(new_id(), Side::Bid, Decimal::from(12));
 
         assert_eq!(result.fills[0].price, Decimal::from(100));
         assert_eq!(result.fills[1].price, Decimal::from(101));
@@ -488,30 +546,30 @@ mod tests {
     fn test_time_priority() {
         let mut ob = OrderBook::new();
 
-        let result1 = ob.add_limit_order(Side::Ask, Decimal::from(100), Decimal::from(5));
-        let order_id_1 = result1.order_id;
+        let order_id_1 = new_id();
+        let result1 = ob.add_limit_order(order_id_1, Side::Ask, Decimal::from(100), Decimal::from(5));
 
-        let result2 = ob.add_limit_order(Side::Ask, Decimal::from(100), Decimal::from(5));
-        let order_id_2 = result2.order_id;
+        let order_id_2 = new_id();
+        let result2 = ob.add_limit_order(order_id_2, Side::Ask, Decimal::from(100), Decimal::from(5));
 
-        let result = ob.add_limit_order(Side::Bid, Decimal::from(100), Decimal::from(5));
+        let result = ob.add_limit_order(new_id(), Side::Bid, Decimal::from(100), Decimal::from(5));
 
         assert_eq!(result.fills.len(), 1);
-        assert_eq!(result.fills[0].sell_order_id, order_id_1);
+        assert_eq!(result.fills[0].sell_order_id, result1.order_id);
 
         assert_eq!(ob.quantity_at_price(Side::Ask, Decimal::from(100)), Decimal::from(5));
 
-        let result = ob.add_limit_order(Side::Bid, Decimal::from(100), Decimal::from(5));
-        assert_eq!(result.fills[0].sell_order_id, order_id_2);
+        let result = ob.add_limit_order(new_id(), Side::Bid, Decimal::from(100), Decimal::from(5));
+        assert_eq!(result.fills[0].sell_order_id, result2.order_id);
     }
 
     #[test]
     fn test_no_match_when_prices_dont_cross() {
         let mut ob = OrderBook::new();
 
-        ob.add_limit_order(Side::Ask, Decimal::from(101), Decimal::from(10));
+        ob.add_limit_order(new_id(), Side::Ask, Decimal::from(101), Decimal::from(10));
 
-        let result = ob.add_limit_order(Side::Bid, Decimal::from(99), Decimal::from(10));
+        let result = ob.add_limit_order(new_id(), Side::Bid, Decimal::from(99), Decimal::from(10));
 
         assert_eq!(result.fills.len(), 0);
 
@@ -523,7 +581,7 @@ mod tests {
     fn test_market_order_with_empty_book() {
         let mut ob = OrderBook::new();
 
-        let result = ob.add_market_order(Side::Bid, Decimal::from(10));
+        let result = ob.add_market_order(new_id(), Side::Bid, Decimal::from(10));
 
         assert_eq!(result.fills.len(), 0);
     }
@@ -532,19 +590,19 @@ mod tests {
     fn test_complex_scenario() {
         let mut ob = OrderBook::new();
 
-        ob.add_limit_order(Side::Bid, Decimal::from(95), Decimal::from(10));
-        ob.add_limit_order(Side::Bid, Decimal::from(96), Decimal::from(15));
-        ob.add_limit_order(Side::Bid, Decimal::from(97), Decimal::from(20));
+        ob.add_limit_order(new_id(), Side::Bid, Decimal::from(95), Decimal::from(10));
+        ob.add_limit_order(new_id(), Side::Bid, Decimal::from(96), Decimal::from(15));
+        ob.add_limit_order(new_id(), Side::Bid, Decimal::from(97), Decimal::from(20));
 
-        ob.add_limit_order(Side::Ask, Decimal::from(103), Decimal::from(10));
-        ob.add_limit_order(Side::Ask, Decimal::from(102), Decimal::from(15));
-        ob.add_limit_order(Side::Ask, Decimal::from(101), Decimal::from(20));
+        ob.add_limit_order(new_id(), Side::Ask, Decimal::from(103), Decimal::from(10));
+        ob.add_limit_order(new_id(), Side::Ask, Decimal::from(102), Decimal::from(15));
+        ob.add_limit_order(new_id(), Side::Ask, Decimal::from(101), Decimal::from(20));
 
         assert_eq!(ob.best_bid(), Some(Decimal::from(97)));
         assert_eq!(ob.best_ask(), Some(Decimal::from(101)));
         assert_eq!(ob.spread(), Some(Decimal::from(4)));
 
-        let result = ob.add_market_order(Side::Ask, Decimal::from(40));
+        let result = ob.add_market_order(new_id(), Side::Ask, Decimal::from(40));
 
         assert_eq!(result.fills.len(), 3);
         assert_eq!(result.fills[0].price, Decimal::from(97));
@@ -563,13 +621,13 @@ mod tests {
     fn test_multiple_orders_same_level() {
         let mut ob = OrderBook::new();
 
-        ob.add_limit_order(Side::Ask, Decimal::from(100), Decimal::from(3));
-        ob.add_limit_order(Side::Ask, Decimal::from(100), Decimal::from(4));
-        ob.add_limit_order(Side::Ask, Decimal::from(100), Decimal::from(5));
+        ob.add_limit_order(new_id(), Side::Ask, Decimal::from(100), Decimal::from(3));
+        ob.add_limit_order(new_id(), Side::Ask, Decimal::from(100), Decimal::from(4));
+        ob.add_limit_order(new_id(), Side::Ask, Decimal::from(100), Decimal::from(5));
 
         assert_eq!(ob.quantity_at_price(Side::Ask, Decimal::from(100)), Decimal::from(12));
 
-        let result = ob.add_limit_order(Side::Bid, Decimal::from(100), Decimal::from(8));
+        let result = ob.add_limit_order(new_id(), Side::Bid, Decimal::from(100), Decimal::from(8));
 
         assert_eq!(result.fills.len(), 3);
         assert_eq!(result.fills[0].quantity, Decimal::from(3));
@@ -583,12 +641,12 @@ mod tests {
     fn test_bid_matching_multiple_asks() {
         let mut ob = OrderBook::new();
 
-        ob.add_limit_order(Side::Ask, Decimal::from(100), Decimal::from(10));
-        ob.add_limit_order(Side::Ask, Decimal::from(101), Decimal::from(10));
-        ob.add_limit_order(Side::Ask, Decimal::from(102), Decimal::from(10));
-        ob.add_limit_order(Side::Ask, Decimal::from(103), Decimal::from(10));
+        ob.add_limit_order(new_id(), Side::Ask, Decimal::from(100), Decimal::from(10));
+        ob.add_limit_order(new_id(), Side::Ask, Decimal::from(101), Decimal::from(10));
+        ob.add_limit_order(new_id(), Side::Ask, Decimal::from(102), Decimal::from(10));
+        ob.add_limit_order(new_id(), Side::Ask, Decimal::from(103), Decimal::from(10));
 
-        let result = ob.add_limit_order(Side::Bid, Decimal::from(102), Decimal::from(25));
+        let result = ob.add_limit_order(new_id(), Side::Bid, Decimal::from(102), Decimal::from(25));
 
         assert_eq!(result.fills.len(), 3);
         assert_eq!(result.fills[0].price, Decimal::from(100));
@@ -606,12 +664,12 @@ mod tests {
     fn test_ask_matching_multiple_bids() {
         let mut ob = OrderBook::new();
 
-        ob.add_limit_order(Side::Bid, Decimal::from(103), Decimal::from(10));
-        ob.add_limit_order(Side::Bid, Decimal::from(102), Decimal::from(10));
-        ob.add_limit_order(Side::Bid, Decimal::from(101), Decimal::from(10));
-        ob.add_limit_order(Side::Bid, Decimal::from(100), Decimal::from(10));
+        ob.add_limit_order(new_id(), Side::Bid, Decimal::from(103), Decimal::from(10));
+        ob.add_limit_order(new_id(), Side::Bid, Decimal::from(102), Decimal::from(10));
+        ob.add_limit_order(new_id(), Side::Bid, Decimal::from(101), Decimal::from(10));
+        ob.add_limit_order(new_id(), Side::Bid, Decimal::from(100), Decimal::from(10));
 
-        let result = ob.add_limit_order(Side::Ask, Decimal::from(101), Decimal::from(25));
+        let result = ob.add_limit_order(new_id(), Side::Ask, Decimal::from(101), Decimal::from(25));
 
         assert_eq!(result.fills.len(), 3);
         assert_eq!(result.fills[0].price, Decimal::from(103));
@@ -629,14 +687,14 @@ mod tests {
     fn test_cancel_partial_filled_order() {
         let mut ob = OrderBook::new();
 
-        let result = ob.add_limit_order(Side::Bid, Decimal::from(100), Decimal::from(20));
-        let order_id = result.order_id;
+        let order_id = new_id();
+        let result = ob.add_limit_order(order_id, Side::Bid, Decimal::from(100), Decimal::from(20));
 
-        ob.add_limit_order(Side::Ask, Decimal::from(100), Decimal::from(5));
+        ob.add_limit_order(new_id(), Side::Ask, Decimal::from(100), Decimal::from(5));
 
         assert_eq!(ob.quantity_at_price(Side::Bid, Decimal::from(100)), Decimal::from(15));
 
-        assert!(ob.cancel_order(order_id));
+        assert!(ob.cancel_order(result.order_id));
         assert_eq!(ob.best_bid(), None);
     }
 
@@ -645,18 +703,18 @@ mod tests {
         let mut ob = OrderBook::new();
 
         for i in 90..=99 {
-            ob.add_limit_order(Side::Bid, Decimal::from(i as i64), Decimal::from(10));
+            ob.add_limit_order(new_id(), Side::Bid, Decimal::from(i as i64), Decimal::from(10));
         }
 
         for i in 101..=110 {
-            ob.add_limit_order(Side::Ask, Decimal::from(i as i64), Decimal::from(10));
+            ob.add_limit_order(new_id(), Side::Ask, Decimal::from(i as i64), Decimal::from(10));
         }
 
         assert_eq!(ob.best_bid(), Some(Decimal::from(99)));
         assert_eq!(ob.best_ask(), Some(Decimal::from(101)));
         assert_eq!(ob.spread(), Some(Decimal::from(2)));
 
-        let result = ob.add_market_order(Side::Ask, Decimal::from(95));
+        let result = ob.add_market_order(new_id(), Side::Ask, Decimal::from(95));
 
         assert_eq!(result.fills.len(), 10);
 
@@ -675,17 +733,17 @@ mod tests {
     fn test_interleaved_orders() {
         let mut ob = OrderBook::new();
 
-        ob.add_limit_order(Side::Bid, Decimal::from(98), Decimal::from(10));
-        ob.add_limit_order(Side::Ask, Decimal::from(102), Decimal::from(10));
-        ob.add_limit_order(Side::Bid, Decimal::from(99), Decimal::from(10));
-        ob.add_limit_order(Side::Ask, Decimal::from(101), Decimal::from(10));
-        ob.add_limit_order(Side::Bid, Decimal::from(97), Decimal::from(10));
-        ob.add_limit_order(Side::Ask, Decimal::from(103), Decimal::from(10));
+        ob.add_limit_order(new_id(), Side::Bid, Decimal::from(98), Decimal::from(10));
+        ob.add_limit_order(new_id(), Side::Ask, Decimal::from(102), Decimal::from(10));
+        ob.add_limit_order(new_id(), Side::Bid, Decimal::from(99), Decimal::from(10));
+        ob.add_limit_order(new_id(), Side::Ask, Decimal::from(101), Decimal::from(10));
+        ob.add_limit_order(new_id(), Side::Bid, Decimal::from(97), Decimal::from(10));
+        ob.add_limit_order(new_id(), Side::Ask, Decimal::from(103), Decimal::from(10));
 
         assert_eq!(ob.best_bid(), Some(Decimal::from(99)));
         assert_eq!(ob.best_ask(), Some(Decimal::from(101)));
 
-        let result = ob.add_limit_order(Side::Bid, Decimal::from(102), Decimal::from(15));
+        let result = ob.add_limit_order(new_id(), Side::Bid, Decimal::from(102), Decimal::from(15));
 
         assert_eq!(result.fills.len(), 2);
         assert_eq!(result.fills[0].price, Decimal::from(101));
@@ -698,20 +756,20 @@ mod tests {
     }
 
     #[test]
-    fn test_order_id_generation() {
+    fn test_order_id_preserved() {
         let mut ob = OrderBook::new();
 
-        let r1 = ob.add_limit_order(Side::Bid, Decimal::from(100), Decimal::from(10));
-        let r2 = ob.add_limit_order(Side::Ask, Decimal::from(101), Decimal::from(10));
-        let r3 = ob.add_limit_order(Side::Bid, Decimal::from(99), Decimal::from(10));
+        let id1 = new_id();
+        let id2 = new_id();
+        let id3 = new_id();
 
-        let id1 = r1.order_id;
-        let id2 = r2.order_id;
-        let id3 = r3.order_id;
+        let r1 = ob.add_limit_order(id1, Side::Bid, Decimal::from(100), Decimal::from(10));
+        let r2 = ob.add_limit_order(id2, Side::Ask, Decimal::from(101), Decimal::from(10));
+        let r3 = ob.add_limit_order(id3, Side::Bid, Decimal::from(99), Decimal::from(10));
 
-        assert_eq!(id1, 1);
-        assert_eq!(id2, 2);
-        assert_eq!(id3, 3);
+        assert_eq!(r1.order_id, id1);
+        assert_eq!(r2.order_id, id2);
+        assert_eq!(r3.order_id, id3);
     }
 
     #[test]
@@ -719,10 +777,10 @@ mod tests {
         let mut ob = OrderBook::new();
 
         for i in 100..110 {
-            ob.add_limit_order(Side::Ask, Decimal::from(i as i64), Decimal::from(10));
+            ob.add_limit_order(new_id(), Side::Ask, Decimal::from(i as i64), Decimal::from(10));
         }
 
-        let result = ob.add_limit_order(Side::Bid, Decimal::from(109), Decimal::from(100));
+        let result = ob.add_limit_order(new_id(), Side::Bid, Decimal::from(109), Decimal::from(100));
 
         assert_eq!(result.fills.len(), 10);
 
@@ -736,9 +794,9 @@ mod tests {
     fn test_market_order_partial_liquidity() {
         let mut ob = OrderBook::new();
 
-        ob.add_limit_order(Side::Ask, Decimal::from(100), Decimal::from(10));
+        ob.add_limit_order(new_id(), Side::Ask, Decimal::from(100), Decimal::from(10));
 
-        let result = ob.add_market_order(Side::Bid, Decimal::from(20));
+        let result = ob.add_market_order(new_id(), Side::Bid, Decimal::from(20));
 
         assert_eq!(result.fills.len(), 1);
         assert_eq!(result.fills[0].quantity, Decimal::from(10));
@@ -750,9 +808,9 @@ mod tests {
     fn test_self_matching_prevented() {
         let mut ob = OrderBook::new();
 
-        ob.add_limit_order(Side::Bid, Decimal::from(100), Decimal::from(10));
+        ob.add_limit_order(new_id(), Side::Bid, Decimal::from(100), Decimal::from(10));
 
-        let result = ob.add_limit_order(Side::Ask, Decimal::from(101), Decimal::from(10));
+        let result = ob.add_limit_order(new_id(), Side::Ask, Decimal::from(101), Decimal::from(10));
 
         assert_eq!(result.fills.len(), 0);
 
@@ -775,20 +833,20 @@ mod tests {
     fn test_cancel_nonexistent_order() {
         let mut ob = OrderBook::new();
 
-        assert!(!ob.cancel_order(999));
+        assert!(!ob.cancel_order(new_id()));
     }
 
     #[test]
     fn test_multiple_cancellations() {
         let mut ob = OrderBook::new();
 
-        let r1 = ob.add_limit_order(Side::Bid, Decimal::from(100), Decimal::from(10));
-        let r2 = ob.add_limit_order(Side::Bid, Decimal::from(99), Decimal::from(10));
-        let r3 = ob.add_limit_order(Side::Bid, Decimal::from(98), Decimal::from(10));
+        let id1 = new_id();
+        let id2 = new_id();
+        let id3 = new_id();
 
-        let id1 = r1.order_id;
-        let id2 = r2.order_id;
-        let id3 = r3.order_id;
+        ob.add_limit_order(id1, Side::Bid, Decimal::from(100), Decimal::from(10));
+        ob.add_limit_order(id2, Side::Bid, Decimal::from(99), Decimal::from(10));
+        ob.add_limit_order(id3, Side::Bid, Decimal::from(98), Decimal::from(10));
 
         assert_eq!(ob.best_bid(), Some(Decimal::from(100)));
 
@@ -800,5 +858,41 @@ mod tests {
 
         assert!(ob.cancel_order(id2));
         assert_eq!(ob.best_bid(), None);
+    }
+
+    #[test]
+    fn test_get_order() {
+        let mut ob = OrderBook::new();
+
+        let order_id = new_id();
+        ob.add_limit_order(order_id, Side::Bid, Decimal::from(100), Decimal::from(10));
+
+        let order = ob.get_order(order_id);
+        assert!(order.is_some());
+        let order = order.unwrap();
+        assert_eq!(order.id, order_id);
+        assert_eq!(order.side, Side::Bid);
+        assert_eq!(order.remaining_quantity, Decimal::from(10));
+
+        // Non-existent order
+        assert!(ob.get_order(new_id()).is_none());
+    }
+
+    #[test]
+    fn test_restore_order() {
+        let mut ob = OrderBook::new();
+
+        // Add and then cancel an order
+        let order_id = new_id();
+        ob.add_limit_order(order_id, Side::Bid, Decimal::from(100), Decimal::from(10));
+
+        let order = ob.get_order(order_id).unwrap().clone();
+        assert!(ob.cancel_order(order_id));
+        assert_eq!(ob.best_bid(), None);
+
+        // Restore the order
+        ob.restore_order(order);
+        assert_eq!(ob.best_bid(), Some(Decimal::from(100)));
+        assert_eq!(ob.quantity_at_price(Side::Bid, Decimal::from(100)), Decimal::from(10));
     }
 }

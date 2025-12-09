@@ -1,0 +1,71 @@
+// FlatBuffers schema for market data events
+// Compile with: flatc --rust -o src/generated market_data.fbs
+
+namespace MarketData;
+
+enum Side : byte { Bid = 0, Ask = 1 }
+enum DeltaAction : byte { Add = 0, Update = 1, Remove = 2 }
+
+struct PriceLevel {
+  price: float64;
+  quantity: float64;
+}
+
+struct LevelDelta {
+  action: DeltaAction;
+  side: Side;
+  price: float64;
+  quantity: float64;
+}
+
+// UUID represented as two 64-bit integers (high and low bits)
+// This is more efficient than a string representation
+struct Uuid {
+  high: uint64;
+  low: uint64;
+}
+
+table Fill {
+  symbol: string;
+  // Order IDs are now UUIDs (single ID scheme)
+  buy_order_id: Uuid;
+  sell_order_id: Uuid;
+  price: float64;
+  quantity: float64;
+  timestamp: uint64;
+}
+
+table OrderBookSnapshot {
+  symbol: string;
+  sequence: uint64;
+  bids: [PriceLevel];
+  asks: [PriceLevel];
+}
+
+table OrderBookDelta {
+  symbol: string;
+  sequence: uint64;
+  deltas: [LevelDelta];
+}
+
+// Sent when an order is cancelled (including unfilled market orders)
+table OrderCancelled {
+  // Order ID (UUID)
+  order_id: Uuid;
+  // How much was filled before cancellation (for partial fills)
+  filled_quantity: float64;
+}
+
+// Sent when an order is 100% filled
+table OrderFilled {
+  // Order ID (UUID)
+  order_id: Uuid;
+}
+
+union EventPayload { Fill, OrderBookSnapshot, OrderBookDelta, OrderCancelled, OrderFilled }
+
+table MarketEvent {
+  payload: EventPayload;
+}
+
+root_type MarketEvent;

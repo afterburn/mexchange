@@ -1,14 +1,14 @@
-use matching_engine::{OrderBook, Side};
+use matching_engine::{OrderBook, Side, Uuid};
 use rust_decimal::Decimal;
 
 fn main() {
     let mut ob = OrderBook::new();
 
-    ob.add_limit_order(Side::Ask, Decimal::from(101), Decimal::from(100));
-    ob.add_limit_order(Side::Ask, Decimal::from(102), Decimal::from(150));
-    ob.add_limit_order(Side::Ask, Decimal::from(103), Decimal::from(200));
+    ob.add_limit_order(Uuid::new_v4(), Side::Ask, Decimal::from(101), Decimal::from(100));
+    ob.add_limit_order(Uuid::new_v4(), Side::Ask, Decimal::from(102), Decimal::from(150));
+    ob.add_limit_order(Uuid::new_v4(), Side::Ask, Decimal::from(103), Decimal::from(200));
 
-    let result = ob.add_market_order(Side::Bid, Decimal::from(120));
+    let result = ob.add_market_order(Uuid::new_v4(), Side::Bid, Decimal::from(120));
 
     println!("Order ID: {}", result.order_id);
     for fill in &result.fills {
