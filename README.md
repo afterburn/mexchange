@@ -4,21 +4,24 @@ A modular, high-performance cryptocurrency exchange platform built with Rust.
 
 > **Work in Progress**: This project is under active development. The current implementation works but the architecture is evolving toward the target design described below.
 
+**Live Demo**: [exchange.kevin.rs](https://exchange.kevin.rs)
+
 ![mExchange Trading Interface](docs/screenshot.png)
 
 ## Current Status
 
 The exchange is functional with the following components:
 
-| Component | Status | Description |
-|-----------|--------|-------------|
-| **matching_engine** | Complete | High-performance order matching library |
-| **matching_engine_service** | Complete | REST/UDP wrapper for matching engine |
-| **gateway** | Complete | Client-facing WebSocket/REST API |
-| **accounts** | Complete | User auth, balances, settlement |
-| **frontend** | Complete | React trading interface |
-| **trading_bot** | Complete | Automated market making strategies |
-| **market_data** | Partial | OHLCV aggregation (Kafka-dependent) |
+| Component | Type | Status | Description |
+|-----------|------|--------|-------------|
+| **matching_engine** | Library | Complete | High-performance order matching |
+| **udp_proto** | Library | Complete | FlatBuffers-based UDP protocol definitions |
+| **matching_engine_service** | Service | Complete | REST/UDP wrapper for matching engine |
+| **gateway** | Service | Complete | Client-facing WebSocket/REST API |
+| **accounts** | Service | Complete | User auth, balances, settlement |
+| **market_data** | Service | Partial | OHLCV aggregation (Kafka-dependent) |
+| **trading_bot** | Service | Complete | Automated market making strategies |
+| **frontend** | App | Complete | React trading interface |
 
 ## Quick Start
 
