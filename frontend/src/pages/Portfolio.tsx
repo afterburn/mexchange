@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { accountsAPI, type FaucetStatus } from '../api/accounts';
 import logoSvg from '../assets/logo.svg';
@@ -9,6 +9,8 @@ type Tab = 'deposit' | 'withdraw';
 
 export default function Portfolio() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const isEmbed = searchParams.has('embed');
   const { user, balances, fetchBalances, logout } = useAuthStore();
   const [faucetStatus, setFaucetStatus] = useState<FaucetStatus | null>(null);
   const [faucetLoading, setFaucetLoading] = useState(false);
@@ -108,14 +110,18 @@ export default function Portfolio() {
 
   return (
     <div className="min-h-screen bg-black text-white">
-      {/* Top Navigation Bar */}
-      <div className="flex items-center justify-between px-4 h-9 border-b border-white/10 shrink-0">
-        <button className="flex items-center gap-2 text-xs text-white/60 hover:text-white transition-colors">
-          <span>&larr;</span>
-          <span>Back to projects</span>
-        </button>
-        <div />
-      </div>
+      {/* Top Navigation Bar - only shown when embedded */}
+      {isEmbed && (
+        <div className="flex items-center justify-between px-4 h-9 border-b border-white/10 shrink-0">
+          <a
+            href="https://kevin.rs/projects"
+            className="flex items-center gap-2 text-xs text-white/60 hover:text-white transition-colors"
+          >
+            <span>&larr;</span>
+            <span>Back to projects</span>
+          </a>
+        </div>
+      )}
 
       {/* Auth Bar */}
       <div className="flex items-center justify-between px-4 h-8 border-b border-white/10 shrink-0">
