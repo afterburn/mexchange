@@ -34,22 +34,25 @@ jobs:
           cargo build --release --manifest-path accounts/Cargo.toml
           cargo build --release --manifest-path market_data/Cargo.toml
 
+          # Copy binaries to a single directory for upload
+          mkdir -p dist/bin
+          cp gateway/target/release/gateway dist/bin/
+          cp matching_engine_service/target/release/matching_engine_service dist/bin/
+          cp accounts/target/release/accounts dist/bin/
+          cp market_data/target/release/market_data dist/bin/
+
       - name: Build frontend
         run: |
           cd frontend
           npm ci
           npm run build
+          cp -r dist ../dist/frontend
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: deploy-artifacts
-          path: |
-            target/release/gateway
-            target/release/matching_engine_service
-            target/release/accounts
-            target/release/market_data
-            frontend/dist/
+          path: dist/
 
   deploy:
     needs: build
@@ -82,13 +85,10 @@ jobs:
           ssh ec2 "sudo mkdir -p ${{ env.DEPLOY_PATH }}/{bin,frontend} && sudo chown -R \$USER:\$USER ${{ env.DEPLOY_PATH }}"
 
           # Copy binaries
-          scp artifacts/target/release/gateway ec2:${{ env.DEPLOY_PATH }}/bin/
-          scp artifacts/target/release/matching_engine_service ec2:${{ env.DEPLOY_PATH }}/bin/
-          scp artifacts/target/release/accounts ec2:${{ env.DEPLOY_PATH }}/bin/
-          scp artifacts/target/release/market_data ec2:${{ env.DEPLOY_PATH }}/bin/
+          scp artifacts/bin/* ec2:${{ env.DEPLOY_PATH }}/bin/
 
           # Copy frontend
-          scp -r artifacts/frontend/dist/* ec2:${{ env.DEPLOY_PATH }}/frontend/
+          scp -r artifacts/frontend/* ec2:${{ env.DEPLOY_PATH }}/frontend/
 
           # Make binaries executable
           ssh ec2 "chmod +x ${{ env.DEPLOY_PATH }}/bin/*"
