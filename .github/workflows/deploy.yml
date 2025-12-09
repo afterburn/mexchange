@@ -30,6 +30,7 @@ jobs:
             accounts
             market_data
             matching_engine
+            trading_bot
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -44,6 +45,7 @@ jobs:
           cargo build --release --manifest-path matching_engine_service/Cargo.toml
           cargo build --release --manifest-path accounts/Cargo.toml
           cargo build --release --manifest-path market_data/Cargo.toml
+          cargo build --release --manifest-path trading_bot/Cargo.toml
 
           # Copy binaries to a single directory for upload
           mkdir -p dist/bin
@@ -51,6 +53,7 @@ jobs:
           cp matching_engine_service/target/release/matching_engine_service dist/bin/
           cp accounts/target/release/accounts dist/bin/
           cp market_data/target/release/market_data dist/bin/
+          cp trading_bot/target/release/trading_bot dist/bin/
 
       - name: Build frontend
         env:
@@ -96,7 +99,7 @@ jobs:
       - name: Deploy to EC2
         run: |
           # Stop services before deploying
-          ssh ec2 "sudo systemctl stop mexchange-gateway mexchange-matching-engine mexchange-accounts mexchange-market-data 2>/dev/null || true"
+          ssh ec2 "sudo systemctl stop mexchange-trading-bot mexchange-gateway mexchange-matching-engine mexchange-accounts mexchange-market-data 2>/dev/null || true"
 
           # Create directories on EC2
           ssh ec2 "sudo mkdir -p ${{ env.DEPLOY_PATH }}/{bin,frontend} && sudo chown -R \$USER:\$USER ${{ env.DEPLOY_PATH }}"
@@ -203,13 +206,30 @@ jobs:
           WantedBy=multi-user.target
           SERVICE
 
+          # Trading Bot service
+          sudo tee /etc/systemd/system/mexchange-trading-bot.service > /dev/null << SERVICE
+          [Unit]
+          Description=Mexchange Trading Bot
+          After=network.target mexchange-gateway.service mexchange-matching-engine.service mexchange-accounts.service
+
+          [Service]
+          Type=simple
+          EnvironmentFile=/etc/mexchange.env
+          ExecStart=/opt/mexchange/bin/trading_bot --gateway-host 127.0.0.1 --gateway-port 3000 --all
+          Restart=always
+          RestartSec=10
+
+          [Install]
+          WantedBy=multi-user.target
+          SERVICE
+
           sudo systemctl daemon-reload
           EOF
 
       - name: Restart services
         run: |
           ssh ec2 << 'EOF'
-          sudo systemctl enable mexchange-accounts mexchange-matching-engine mexchange-gateway mexchange-market-data
+          sudo systemctl enable mexchange-accounts mexchange-matching-engine mexchange-gateway mexchange-market-data mexchange-trading-bot
           sudo systemctl restart mexchange-accounts
           sleep 3
           sudo systemctl restart mexchange-matching-engine
@@ -225,3 +245,8 @@ jobs:
           ssh ec2 "curl -sf http://localhost:3001/health" && echo "Accounts is healthy"
           ssh ec2 "curl -sf http://localhost:8080/health" && echo "Matching Engine is healthy"
           ssh ec2 "curl -sf http://localhost:3000/health" && echo "Gateway is healthy"
+
+      - name: Start trading bot
+        run: |
+          ssh ec2 "sudo systemctl restart mexchange-trading-bot"
+          echo "Trading bot started"
