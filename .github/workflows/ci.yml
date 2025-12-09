@@ -7,7 +7,38 @@ on:
     branches: [master]
 
 jobs:
-  test:
+  # Detect which paths have changed
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+      rust: ${{ steps.filter.outputs.rust }}
+      matching_engine: ${{ steps.filter.outputs.matching_engine }}
+      accounts: ${{ steps.filter.outputs.accounts }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            frontend:
+              - 'frontend/**'
+            rust:
+              - 'gateway/**'
+              - 'matching_engine_service/**'
+              - 'accounts/**'
+              - 'matching_engine/**'
+              - 'udp_proto/**'
+              - 'market_data/**'
+              - 'trading_bot/**'
+            matching_engine:
+              - 'matching_engine/**'
+            accounts:
+              - 'accounts/**'
+
+  test-rust:
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -27,9 +58,11 @@ jobs:
             matching_engine
 
       - name: Run matching_engine tests
+        if: ${{ needs.changes.outputs.matching_engine == 'true' }}
         run: cargo test --manifest-path matching_engine/Cargo.toml
 
       - name: Run accounts tests
+        if: ${{ needs.changes.outputs.accounts == 'true' }}
         run: cargo test --manifest-path accounts/Cargo.toml
 
       - name: Check gateway builds
@@ -38,7 +71,9 @@ jobs:
       - name: Check matching_engine_service builds
         run: cargo check --manifest-path matching_engine_service/Cargo.toml
 
-  frontend:
+  test-frontend:
+    needs: changes
+    if: ${{ needs.changes.outputs.frontend == 'true' }}
     runs-on: ubuntu-latest
 
     steps:

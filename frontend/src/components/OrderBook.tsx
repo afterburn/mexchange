@@ -271,41 +271,47 @@ const OrderBook = memo(function OrderBook({ bids, asks, maxLevels = 20 }: OrderB
         className="flex-1 overflow-y-auto"
         onScroll={handleScroll}
       >
-        <div style={{ height: totalHeight, position: 'relative' }}>
-          <div style={{ transform: `translateY(${paddingTop}px)` }}>
-            {visibleRows.map((row) => {
-              if (row.type === 'spread' && row.spreadInfo) {
-                return (
-                  <SpreadRow
-                    key="spread"
-                    midPriceStr={row.spreadInfo.midPriceStr}
-                    spreadStr={row.spreadInfo.spreadStr}
-                    spreadPercentStr={row.spreadInfo.spreadPercentStr}
-                  />
-                );
-              }
-              if (row.type === 'ask' && row.level) {
-                return (
-                  <AskRow
-                    key={`ask-${row.index}`}
-                    ask={row.level}
-                    widthPercent={row.widthPercent || 0}
-                  />
-                );
-              }
-              if (row.type === 'bid' && row.level) {
-                return (
-                  <BidRow
-                    key={`bid-${row.index}`}
-                    bid={row.level}
-                    widthPercent={row.widthPercent || 0}
-                  />
-                );
-              }
-              return null;
-            })}
+        {allRows.length === 0 ? (
+          <div className="flex items-center justify-center h-full text-white/30 text-xs">
+            No orders in book
           </div>
-        </div>
+        ) : (
+          <div style={{ height: totalHeight, position: 'relative' }}>
+            <div style={{ transform: `translateY(${paddingTop}px)` }}>
+              {visibleRows.map((row) => {
+                if (row.type === 'spread' && row.spreadInfo) {
+                  return (
+                    <SpreadRow
+                      key="spread"
+                      midPriceStr={row.spreadInfo.midPriceStr}
+                      spreadStr={row.spreadInfo.spreadStr}
+                      spreadPercentStr={row.spreadInfo.spreadPercentStr}
+                    />
+                  );
+                }
+                if (row.type === 'ask' && row.level) {
+                  return (
+                    <AskRow
+                      key={`ask-${row.index}`}
+                      ask={row.level}
+                      widthPercent={row.widthPercent || 0}
+                    />
+                  );
+                }
+                if (row.type === 'bid' && row.level) {
+                  return (
+                    <BidRow
+                      key={`bid-${row.index}`}
+                      bid={row.level}
+                      widthPercent={row.widthPercent || 0}
+                    />
+                  );
+                }
+                return null;
+              })}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

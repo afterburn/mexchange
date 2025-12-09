@@ -28,11 +28,17 @@ const RecentTrades = memo(function RecentTrades({ trades }: RecentTradesProps) {
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        <div className="flex flex-col py-0.5">
-          {trades.map((trade, index) => (
-            <TradeRow key={`${trade.id}-${index}`} trade={trade} />
-          ))}
-        </div>
+        {trades.length === 0 ? (
+          <div className="flex items-center justify-center h-full text-white/30 text-xs">
+            No recent trades
+          </div>
+        ) : (
+          <div className="flex flex-col py-0.5">
+            {trades.map((trade, index) => (
+              <TradeRow key={`${trade.id}-${index}`} trade={trade} />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

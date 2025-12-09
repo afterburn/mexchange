@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, memo } from 'react';
+import { useEffect, useRef, useState, memo, useCallback } from 'react';
 import type { Trade } from '../types';
 
 const API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:3000').trim();
@@ -42,87 +42,55 @@ const PriceChart = memo(function PriceChart({ trades }: PriceChartProps) {
   const [timeframe, setTimeframe] = useState<Timeframe>('1m');
   const [chartType, setChartType] = useState<'candles' | 'line'>('candles');
   const [isReady, setIsReady] = useState(false);
+  const [hasCandles, setHasCandles] = useState(false);
 
-  // Fetch initial OHLCV data when timeframe changes
-  useEffect(() => {
-    let cancelled = false;
-    candlesRef.current.clear();
-    lastProcessedTradeRef.current = 0;
+  // Define helper functions first using useCallback
+  const createSeries = useCallback(() => {
+    const chart = chartRef.current as ReturnType<typeof window.LightweightCharts.createChart> | null;
+    if (!chart) return;
 
-    async function fetchData() {
-      try {
-        const res = await fetch(
-          `${API_URL}/api/ohlcv?symbol=${encodeURIComponent('KCN/EUR')}&interval=${timeframe}&limit=500`
-        );
-        if (!res.ok || cancelled) return;
+    const LWC = window.LightweightCharts;
 
-        const json = await res.json();
-        if (cancelled) return;
-
-        const bars: OHLCVBar[] = json.data || [];
-        for (const bar of bars) {
-          const time = Math.floor(new Date(bar.open_time).getTime() / 1000);
-          candlesRef.current.set(time, {
-            time,
-            open: parseFloat(bar.open),
-            high: parseFloat(bar.high),
-            low: parseFloat(bar.low),
-            close: parseFloat(bar.close),
-          });
-        }
-
-        updateChart();
-      } catch (err) {
-        console.error('Failed to fetch OHLCV:', err);
-      }
+    if (seriesRef.current) {
+      chart.removeSeries(seriesRef.current as Parameters<typeof chart.removeSeries>[0]);
     }
 
-    fetchData();
-    return () => { cancelled = true; };
-  }, [timeframe]);
+    if (chartType === 'candles') {
+      seriesRef.current = chart.addSeries(LWC.CandlestickSeries, {
+        upColor: '#22c55e',
+        downColor: '#ef4444',
+        borderUpColor: '#22c55e',
+        borderDownColor: '#ef4444',
+        wickUpColor: '#22c55e',
+        wickDownColor: '#ef4444',
+      });
+    } else {
+      seriesRef.current = chart.addSeries(LWC.LineSeries, {
+        color: '#3b82f6',
+        lineWidth: 2,
+      });
+    }
+  }, [chartType]);
 
-  // Process new trades into candles
-  useEffect(() => {
-    if (trades.length === 0) return;
+  const updateChart = useCallback(() => {
+    const chart = chartRef.current as ReturnType<typeof window.LightweightCharts.createChart> | null;
+    const series = seriesRef.current as ReturnType<ReturnType<typeof window.LightweightCharts.createChart>['addSeries']> | null;
+    if (!chart || !series) return;
 
-    const tfSeconds = TIMEFRAME_SECONDS[timeframe];
-    let updated = false;
+    const candles = Array.from(candlesRef.current.values()).sort((a, b) => a.time - b.time);
 
-    for (const trade of trades) {
-      // Skip already processed trades
-      if (trade.timestamp <= lastProcessedTradeRef.current) continue;
-
-      const tradeTimeSec = Math.floor(trade.timestamp / 1000);
-      const candleTime = Math.floor(tradeTimeSec / tfSeconds) * tfSeconds;
-
-      const existing = candlesRef.current.get(candleTime);
-      if (existing) {
-        existing.high = Math.max(existing.high, trade.price);
-        existing.low = Math.min(existing.low, trade.price);
-        existing.close = trade.price;
-      } else {
-        candlesRef.current.set(candleTime, {
-          time: candleTime,
-          open: trade.price,
-          high: trade.price,
-          low: trade.price,
-          close: trade.price,
-        });
-      }
-      updated = true;
+    if (chartType === 'candles') {
+      series.setData(candles);
+    } else {
+      series.setData(candles.map(c => ({ time: c.time, value: c.close })));
     }
 
-    if (trades.length > 0) {
-      lastProcessedTradeRef.current = Math.max(
-        lastProcessedTradeRef.current,
-        ...trades.map(t => t.timestamp)
-      );
-    }
+    setHasCandles(candles.length > 0);
 
-    if (updated) {
-      updateChart();
+    if (candles.length > 0) {
+      chart.timeScale().scrollToRealTime();
     }
-  }, [trades, timeframe]);
+  }, [chartType]);
 
   // Wait for LightweightCharts library
   useEffect(() => {
@@ -190,59 +158,95 @@ const PriceChart = memo(function PriceChart({ trades }: PriceChartProps) {
       chartRef.current = null;
       seriesRef.current = null;
     };
-  }, [isReady]);
+  }, [isReady, createSeries, timeframe]);
 
   // Recreate series when chart type changes
   useEffect(() => {
     if (!chartRef.current || !isReady) return;
     createSeries();
     updateChart();
-  }, [chartType, isReady]);
+  }, [chartType, isReady, createSeries, updateChart]);
 
-  function createSeries() {
-    const chart = chartRef.current as ReturnType<typeof window.LightweightCharts.createChart> | null;
-    if (!chart) return;
+  // Fetch initial OHLCV data when timeframe changes
+  useEffect(() => {
+    let cancelled = false;
+    candlesRef.current.clear();
+    lastProcessedTradeRef.current = 0;
 
-    const LWC = window.LightweightCharts;
+    async function fetchData() {
+      try {
+        const res = await fetch(
+          `${API_URL}/api/ohlcv?symbol=${encodeURIComponent('KCN/EUR')}&interval=${timeframe}&limit=500`
+        );
+        if (!res.ok || cancelled) return;
 
-    if (seriesRef.current) {
-      chart.removeSeries(seriesRef.current as Parameters<typeof chart.removeSeries>[0]);
+        const json = await res.json();
+        if (cancelled) return;
+
+        const bars: OHLCVBar[] = json.data || [];
+        for (const bar of bars) {
+          const time = Math.floor(new Date(bar.open_time).getTime() / 1000);
+          candlesRef.current.set(time, {
+            time,
+            open: parseFloat(bar.open),
+            high: parseFloat(bar.high),
+            low: parseFloat(bar.low),
+            close: parseFloat(bar.close),
+          });
+        }
+
+        updateChart();
+      } catch (err) {
+        console.error('Failed to fetch OHLCV:', err);
+      }
     }
 
-    if (chartType === 'candles') {
-      seriesRef.current = chart.addSeries(LWC.CandlestickSeries, {
-        upColor: '#22c55e',
-        downColor: '#ef4444',
-        borderUpColor: '#22c55e',
-        borderDownColor: '#ef4444',
-        wickUpColor: '#22c55e',
-        wickDownColor: '#ef4444',
-      });
-    } else {
-      seriesRef.current = chart.addSeries(LWC.LineSeries, {
-        color: '#3b82f6',
-        lineWidth: 2,
-      });
+    fetchData();
+    return () => { cancelled = true; };
+  }, [timeframe, updateChart]);
+
+  // Process new trades into candles
+  useEffect(() => {
+    if (trades.length === 0) return;
+
+    const tfSeconds = TIMEFRAME_SECONDS[timeframe];
+    let updated = false;
+
+    for (const trade of trades) {
+      // Skip already processed trades
+      if (trade.timestamp <= lastProcessedTradeRef.current) continue;
+
+      const tradeTimeSec = Math.floor(trade.timestamp / 1000);
+      const candleTime = Math.floor(tradeTimeSec / tfSeconds) * tfSeconds;
+
+      const existing = candlesRef.current.get(candleTime);
+      if (existing) {
+        existing.high = Math.max(existing.high, trade.price);
+        existing.low = Math.min(existing.low, trade.price);
+        existing.close = trade.price;
+      } else {
+        candlesRef.current.set(candleTime, {
+          time: candleTime,
+          open: trade.price,
+          high: trade.price,
+          low: trade.price,
+          close: trade.price,
+        });
+      }
+      updated = true;
     }
-  }
 
-  function updateChart() {
-    const chart = chartRef.current as ReturnType<typeof window.LightweightCharts.createChart> | null;
-    const series = seriesRef.current as ReturnType<ReturnType<typeof window.LightweightCharts.createChart>['addSeries']> | null;
-    if (!chart || !series) return;
-
-    const candles = Array.from(candlesRef.current.values()).sort((a, b) => a.time - b.time);
-
-    if (chartType === 'candles') {
-      series.setData(candles);
-    } else {
-      series.setData(candles.map(c => ({ time: c.time, value: c.close })));
+    if (trades.length > 0) {
+      lastProcessedTradeRef.current = Math.max(
+        lastProcessedTradeRef.current,
+        ...trades.map(t => t.timestamp)
+      );
     }
 
-    if (candles.length > 0) {
-      chart.timeScale().scrollToRealTime();
+    if (updated) {
+      updateChart();
     }
-  }
+  }, [trades, timeframe, updateChart]);
 
   if (!isReady) {
     return (
@@ -299,7 +303,7 @@ const PriceChart = memo(function PriceChart({ trades }: PriceChartProps) {
       <div ref={containerRef} className="flex-1 min-h-0" />
 
       {/* Empty state overlay */}
-      {candlesRef.current.size === 0 && (
+      {!hasCandles && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <span className="text-white/30 text-sm">Waiting for trades...</span>
         </div>

@@ -49,7 +49,7 @@ const TradeHistory = memo(function TradeHistory({ trades, isLoading }: TradeHist
           </div>
         ) : trades.length === 0 ? (
           <div className="flex items-center justify-center h-full text-white/30 text-xs">
-            No trade history
+            No order history
           </div>
         ) : (
           <div className="flex flex-col py-0.5">

@@ -1,5 +1,4 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
 import MarketStats from './components/MarketStats';
 import PriceChart from './components/PriceChart';
 import DepthChart from './components/DepthChart';
@@ -13,9 +12,10 @@ import { useOrderBookWorker, type TradeWithOrderIds, type OrderEvent } from './h
 import { useAuthStore } from './stores/authStore';
 import { useToastStore } from './stores/toastStore';
 import ToastContainer from './components/ToastContainer';
+import EmbedTopBar from './components/EmbedTopBar';
+import HeaderBar from './components/HeaderBar';
 import { accountsAPI, type Order as APIOrder } from './api/accounts';
 import type { Order } from './types';
-import logoSvg from './assets/logo.svg';
 
 type ChartView = 'price' | 'depth';
 type OrdersTab = 'open' | 'history';
@@ -26,9 +26,7 @@ const DEFAULT_BALANCE = { eur: 0, kcn: 0 };
 const TOKEN_REFRESH_INTERVAL = 10 * 60 * 1000;
 
 function App() {
-  const [searchParams] = useSearchParams();
-  const isEmbed = searchParams.has('embed');
-  const { user, balances, fetchBalances, logout, refreshToken } = useAuthStore();
+  const { user, balances, fetchBalances, refreshToken } = useAuthStore();
 
   const [chartView, setChartView] = useState<ChartView>('price');
   const [ordersTab, setOrdersTab] = useState<OrdersTab>('open');
@@ -290,135 +288,60 @@ function App() {
   const handleSetPriceChart = useCallback(() => setChartView('price'), []);
   const handleSetDepthChart = useCallback(() => setChartView('depth'), []);
 
-  const handleLogout = async () => {
-    await logout();
-  };
-
   return (
     <ErrorBoundary>
       <ToastContainer />
       <div className="flex flex-col h-screen bg-black text-white overflow-hidden">
-        {/* Top Navigation Bar - only shown when embedded */}
-        {isEmbed && (
-          <div className="flex items-center justify-between px-4 h-9 border-b border-white/10 shrink-0">
-            <a
-              href="https://kevin.rs/projects"
-              className="flex items-center gap-2 text-xs text-white/60 hover:text-white transition-colors"
-            >
-              <span>&larr;</span>
-              <span>Back to projects</span>
-            </a>
-          </div>
-        )}
+        <EmbedTopBar />
 
-        {/* Auth Bar */}
-        <div className="flex items-center justify-between px-4 h-8 border-b border-white/10 shrink-0">
-          <img src={logoSvg} alt="mExchange" className="h-5" />
-          {user ? (
-            <div className="flex items-center gap-3">
-              <Link to="/portfolio" className="text-xs text-white/60 hover:text-white transition-colors">
-                Portfolio
-              </Link>
-              <span className="text-xs text-white/40">{user.email}</span>
-              <button
-                onClick={handleLogout}
-                className="text-xs text-white/60 hover:text-white transition-colors"
-              >
-                Sign out
-              </button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-3">
-              <Link to="/signin" className="text-xs text-white/60 hover:text-white transition-colors">
-                Sign in
-              </Link>
-              <Link to="/signup" className="px-3 py-1 text-xs bg-white text-black rounded hover:bg-white/90 transition-colors">
-                Sign up
-              </Link>
-            </div>
-          )}
-        </div>
+        <HeaderBar />
 
         <MarketStats stats={stats} />
 
-        <div className="flex-1 flex overflow-hidden">
-          {/* Left section: OrderBook + Chart (top), Open Orders (bottom) */}
-          <div className="flex-1 flex flex-col min-w-0">
-            {/* Top row: OrderBook + Chart - fixed height based on 10 levels per side */}
-            {/* Height: 33px title + 23px column header + (10*24px asks) + 38px spread + (10*24px bids) = 574px */}
-            <div className="flex h-[574px] shrink-0">
-              <div className="w-72 border-r border-white/10 flex flex-col">
-                <div className="px-3 py-2 border-b border-white/10 text-xs font-medium text-white/60">Order Book</div>
-                <div className="flex-1 overflow-hidden">
-                  <OrderBook bids={orderBook.bids} asks={orderBook.asks} maxLevels={10} />
-                </div>
-              </div>
-
-              <div className="flex-1 flex flex-col min-w-0">
-                <div className="flex gap-1 px-3 py-1.5 border-b border-white/10 text-xs">
-                  <button
-                    onClick={handleSetPriceChart}
-                    className={`px-2 py-1 rounded transition-colors ${
-                      chartView === 'price'
-                        ? 'text-white bg-white/10 border border-white/20'
-                        : 'text-white/60 hover:text-white hover:bg-white/10'
-                    }`}
-                  >
-                    Price
-                  </button>
-                  <button
-                    onClick={handleSetDepthChart}
-                    className={`px-2 py-1 rounded transition-colors ${
-                      chartView === 'depth'
-                        ? 'text-white bg-white/10 border border-white/20'
-                        : 'text-white/60 hover:text-white hover:bg-white/10'
-                    }`}
-                  >
-                    Depth
-                  </button>
-                </div>
-                <div className="flex-1 min-h-0">
-                  {chartView === 'price' ? (
-                    <PriceChart trades={trades} />
-                  ) : (
-                    <DepthChart bids={orderBook.bids} asks={orderBook.asks} />
-                  )}
-                </div>
-              </div>
+        <div className="flex-1 trading-grid">
+          {/* Chart Section */}
+          <div className="grid-chart flex flex-col min-w-0 border-b md:border-b-0 md:border-r border-white/10">
+            <div className="flex gap-1 px-3 py-1.5 border-b border-white/10 text-xs shrink-0">
+              <button
+                onClick={handleSetPriceChart}
+                className={`px-2 py-1 rounded transition-colors ${
+                  chartView === 'price'
+                    ? 'text-white bg-white/10 border border-white/20'
+                    : 'text-white/60 hover:text-white hover:bg-white/10'
+                }`}
+              >
+                Price
+              </button>
+              <button
+                onClick={handleSetDepthChart}
+                className={`px-2 py-1 rounded transition-colors ${
+                  chartView === 'depth'
+                    ? 'text-white bg-white/10 border border-white/20'
+                    : 'text-white/60 hover:text-white hover:bg-white/10'
+                }`}
+              >
+                Depth
+              </button>
             </div>
-
-            {/* Bottom: Open Orders / Trade History - takes remaining space */}
-            <div className="flex-1 border-t border-white/10 flex flex-col min-h-0">
-              <div className="flex items-center gap-4 px-3 py-1.5 border-b border-white/10">
-                <button
-                  onClick={() => setOrdersTab('open')}
-                  className={`text-xs font-medium transition-colors ${
-                    ordersTab === 'open' ? 'text-white' : 'text-white/40 hover:text-white/60'
-                  }`}
-                >
-                  Open Orders
-                </button>
-                <button
-                  onClick={() => setOrdersTab('history')}
-                  className={`text-xs font-medium transition-colors ${
-                    ordersTab === 'history' ? 'text-white' : 'text-white/40 hover:text-white/60'
-                  }`}
-                >
-                  Order History
-                </button>
-              </div>
-              <div className="flex-1 overflow-hidden">
-                {ordersTab === 'open' ? (
-                  <OpenOrders orders={displayOrders} onCancel={handleCancelOrder} />
-                ) : (
-                  <InlineOrderHistory orders={apiOrders} isLoading={isLoadingOrders} />
-                )}
-              </div>
+            <div className="flex-1 min-h-0">
+              {chartView === 'price' ? (
+                <PriceChart trades={trades} />
+              ) : (
+                <DepthChart bids={orderBook.bids} asks={orderBook.asks} />
+              )}
             </div>
           </div>
 
-          {/* Right section: TradeForm (top), Recent Trades (bottom) */}
-          <div className="w-72 border-l border-white/10 flex flex-col h-full overflow-hidden">
+          {/* OrderBook Section */}
+          <div className="grid-orderbook flex flex-col border-b md:border-b-0 md:border-r border-white/10">
+            <div className="px-3 py-2 border-b border-white/10 text-xs font-medium text-white/60 shrink-0">Order Book</div>
+            <div className="flex-1 overflow-hidden">
+              <OrderBook bids={orderBook.bids} asks={orderBook.asks} maxLevels={10} />
+            </div>
+          </div>
+
+          {/* TradeForm Section */}
+          <div className="grid-tradeform border-b md:border-b-0 md:border-l border-white/10 flex flex-col md:overflow-hidden">
             <TradeForm
               onPlaceOrder={handlePlaceOrder}
               bestBid={stats.bestBid}
@@ -426,11 +349,42 @@ function App() {
               balance={balance}
               isLoggedIn={!!user}
             />
-            <div className="border-t border-white/10 flex-1 flex flex-col min-h-0 overflow-hidden">
-              <div className="px-3 py-1.5 border-b border-white/10 text-xs font-medium text-white/60 shrink-0">Recent Trades</div>
-              <div className="flex-1 overflow-y-auto">
-                <RecentTrades trades={trades} />
-              </div>
+          </div>
+
+          {/* Open Orders Section */}
+          <div className="grid-openorders border-t border-white/10 flex flex-col min-h-0 overflow-hidden">
+            <div className="flex items-center gap-4 px-3 py-1.5 border-b border-white/10 shrink-0">
+              <button
+                onClick={() => setOrdersTab('open')}
+                className={`text-xs font-medium transition-colors ${
+                  ordersTab === 'open' ? 'text-white' : 'text-white/40 hover:text-white/60'
+                }`}
+              >
+                Open Orders
+              </button>
+              <button
+                onClick={() => setOrdersTab('history')}
+                className={`text-xs font-medium transition-colors ${
+                  ordersTab === 'history' ? 'text-white' : 'text-white/40 hover:text-white/60'
+                }`}
+              >
+                Order History
+              </button>
+            </div>
+            <div className="flex-1 overflow-hidden">
+              {ordersTab === 'open' ? (
+                <OpenOrders orders={displayOrders} onCancel={handleCancelOrder} />
+              ) : (
+                <InlineOrderHistory orders={apiOrders} isLoading={isLoadingOrders} />
+              )}
+            </div>
+          </div>
+
+          {/* Recent Trades Section */}
+          <div className="grid-recenttrades border-t md:border-l border-white/10 flex flex-col min-h-0 overflow-hidden">
+            <div className="px-3 py-1.5 border-b border-white/10 text-xs font-medium text-white/60 shrink-0">Recent Trades</div>
+            <div className="flex-1 overflow-y-auto">
+              <RecentTrades trades={trades} />
             </div>
           </div>
         </div>

@@ -1,4 +1,4 @@
-import { useState, useEffect, memo } from 'react';
+import { useState, useEffect, memo, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import type { Side, OrderType } from '../types';
 
@@ -16,6 +16,29 @@ const TradeForm = memo(function TradeForm({ onPlaceOrder, bestBid, bestAsk, bala
   const [price, setPrice] = useState<string>('');
   const [quantity, setQuantity] = useState<string>('');
   const [percentage, setPercentage] = useState<number>(0);
+
+  // Track previous prices to detect changes
+  const prevPricesRef = useRef({ bestAsk, bestBid });
+
+  const calculateQuantityFromPercentage = useCallback((pct: number) => {
+    if (pct === 0) return '';
+    if (side === 'Bid') {
+      const maxEur = balance.eur;
+      // For market orders, use bestAsk * 1.05 (slippage buffer) since that's what gets locked
+      // For limit orders, use entered price or bestAsk
+      const priceNum = orderType === 'Limit'
+        ? (parseFloat(price) || bestAsk || 0)
+        : ((bestAsk || 0) * 1.05); // 5% slippage buffer for market orders
+      if (priceNum > 0) {
+        const qty = (maxEur * pct / 100) / priceNum;
+        return qty > 0 ? qty.toFixed(8) : '';
+      }
+      return '';
+    } else {
+      const qty = balance.kcn * pct / 100;
+      return qty > 0 ? qty.toFixed(8) : '';
+    }
+  }, [side, balance.eur, balance.kcn, orderType, price, bestAsk]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -37,37 +60,25 @@ const TradeForm = memo(function TradeForm({ onPlaceOrder, bestBid, bestAsk, bala
     }
   };
 
-  const calculateQuantityFromPercentage = (pct: number) => {
-    if (pct === 0) return '';
-    if (side === 'Bid') {
-      const maxEur = balance.eur;
-      // For market orders, use bestAsk * 1.05 (slippage buffer) since that's what gets locked
-      // For limit orders, use entered price or bestAsk
-      const priceNum = orderType === 'Limit'
-        ? (parseFloat(price) || bestAsk || 0)
-        : ((bestAsk || 0) * 1.05); // 5% slippage buffer for market orders
-      if (priceNum > 0) {
-        const qty = (maxEur * pct / 100) / priceNum;
-        return qty > 0 ? qty.toFixed(8) : '';
-      }
-      return '';
-    } else {
-      const qty = balance.kcn * pct / 100;
-      return qty > 0 ? qty.toFixed(8) : '';
-    }
-  };
-
   const handlePercentageClick = (pct: number) => {
     setPercentage(pct);
     setQuantity(calculateQuantityFromPercentage(pct));
   };
 
   // Auto-update quantity when orderbook prices change (only if percentage is selected)
+  // This is intentional sync behavior - updating form state in response to external price changes
   useEffect(() => {
-    if (percentage > 0) {
+    const pricesChanged =
+      prevPricesRef.current.bestAsk !== bestAsk ||
+      prevPricesRef.current.bestBid !== bestBid;
+
+    if (pricesChanged && percentage > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setQuantity(calculateQuantityFromPercentage(percentage));
     }
-  }, [bestAsk, bestBid]);
+
+    prevPricesRef.current = { bestAsk, bestBid };
+  }, [bestAsk, bestBid, percentage, calculateQuantityFromPercentage]);
 
   const total = orderType === 'Limit' && price ? parseFloat(price) * parseFloat(quantity || '0') : 0;
 

@@ -1,17 +1,15 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { accountsAPI, type FaucetStatus } from '../api/accounts';
-import logoSvg from '../assets/logo.svg';
-import OrderHistory from '../components/OrderHistory';
+import EmbedTopBar from '../components/EmbedTopBar';
+import HeaderBar from '../components/HeaderBar';
 
 type Tab = 'deposit' | 'withdraw';
 
 export default function Portfolio() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const isEmbed = searchParams.has('embed');
-  const { user, balances, fetchBalances, logout } = useAuthStore();
+  const { user, balances, fetchBalances } = useAuthStore();
   const [faucetStatus, setFaucetStatus] = useState<FaucetStatus | null>(null);
   const [faucetLoading, setFaucetLoading] = useState(false);
   const [faucetMessage, setFaucetMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -101,46 +99,13 @@ export default function Portfolio() {
     }
   };
 
-  const handleLogout = async () => {
-    await logout();
-    navigate('/');
-  };
-
   if (!user) return null;
 
   return (
     <div className="min-h-screen bg-black text-white">
-      {/* Top Navigation Bar - only shown when embedded */}
-      {isEmbed && (
-        <div className="flex items-center justify-between px-4 h-9 border-b border-white/10 shrink-0">
-          <a
-            href="https://kevin.rs/projects"
-            className="flex items-center gap-2 text-xs text-white/60 hover:text-white transition-colors"
-          >
-            <span>&larr;</span>
-            <span>Back to projects</span>
-          </a>
-        </div>
-      )}
+      <EmbedTopBar />
 
-      {/* Auth Bar */}
-      <div className="flex items-center justify-between px-4 h-8 border-b border-white/10 shrink-0">
-        <Link to="/">
-          <img src={logoSvg} alt="mExchange" className="h-5" />
-        </Link>
-        <div className="flex items-center gap-3">
-          <Link to="/portfolio" className="text-xs text-white hover:text-white transition-colors">
-            Portfolio
-          </Link>
-          <span className="text-xs text-white/40">{user.email}</span>
-          <button
-            onClick={handleLogout}
-            className="text-xs text-white/60 hover:text-white transition-colors"
-          >
-            Sign out
-          </button>
-        </div>
-      </div>
+      <HeaderBar onLogout={() => navigate('/')} />
 
       {/* Content */}
       <div className="max-w-4xl mx-auto px-4 py-8">
@@ -331,11 +296,6 @@ export default function Portfolio() {
               </form>
             </div>
           </div>
-        </div>
-
-        {/* Order History - Full Width */}
-        <div className="mt-6">
-          <OrderHistory />
         </div>
       </div>
     </div>

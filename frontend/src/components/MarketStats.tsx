@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import type { MarketStats as MarketStatsType } from '../types';
+import MarketSelector from './MarketSelector';
 
 interface MarketStatsProps {
   stats: MarketStatsType;
@@ -12,7 +13,11 @@ const MarketStats = memo(function MarketStats({ stats }: MarketStatsProps) {
     <div className="border-b border-white/10 bg-black px-3 py-2">
       <div className="flex items-center justify-between gap-6">
         <div className="flex items-center gap-3">
-          <span className="text-sm font-semibold">{stats.symbol}</span>
+          <MarketSelector
+            currentSymbol={stats.symbol}
+            currentPrice={stats.lastPrice}
+            currentChange24h={stats.priceChangePercent24h}
+          />
           <span className="text-sm font-semibold">
             €{stats.lastPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </span>

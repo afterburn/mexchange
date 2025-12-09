@@ -59,3 +59,36 @@ body {
 .animate-slide-in {
   animation: slide-in 0.3s ease-out;
 }
+
+/* Mobile-first responsive grid layout for trading interface */
+.trading-grid {
+  display: grid;
+  grid-template-areas:
+    "chart"
+    "orderbook"
+    "tradeform"
+    "openorders"
+    "recenttrades";
+  grid-template-columns: 1fr;
+  grid-template-rows: 280px 400px fit-content(100%) 200px 300px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Desktop layout: 768px and up */
+@media (min-width: 768px) {
+  .trading-grid {
+    grid-template-areas:
+      "orderbook chart tradeform"
+      "openorders openorders recenttrades";
+    grid-template-columns: 288px 1fr 288px;
+    grid-template-rows: 574px 1fr;
+    overflow: hidden;
+  }
+}
+
+.grid-chart { grid-area: chart; }
+.grid-orderbook { grid-area: orderbook; }
+.grid-tradeform { grid-area: tradeform; }
+.grid-openorders { grid-area: openorders; }
+.grid-recenttrades { grid-area: recenttrades; }
