@@ -15,6 +15,9 @@ pub async fn run_migrations(pool: &PgPool) -> Result<(), sqlx::Error> {
         include_str!("../../migrations/002_create_ledger.sql"),
         include_str!("../../migrations/003_add_constraints.sql"),
         include_str!("../../migrations/004_create_orders_trades.sql"),
+        include_str!("../../migrations/005_nullable_trade_ids.sql"),
+        include_str!("../../migrations/006_exchange_fill_id_index.sql"),
+        include_str!("../../migrations/007_remove_exchange_order_id.sql"),
     ];
 
     for migration in migrations {
