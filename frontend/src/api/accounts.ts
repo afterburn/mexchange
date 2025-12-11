@@ -114,7 +114,7 @@ class AccountsAPI {
     }
   }
 
-  async requestOtp(email: string): Promise<{ message: string }> {
+  async requestOtp(email: string): Promise<{ message: string; otp?: string }> {
     return this.fetch('/auth/request-otp', {
       method: 'POST',
       body: JSON.stringify({ email }),

@@ -20,6 +20,8 @@ pub struct RequestOtpPayload {
 #[derive(Debug, Serialize)]
 pub struct RequestOtpResponse {
     message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    otp: Option<String>,  // Only included in demo/console mode
 }
 
 #[derive(Debug, Deserialize)]
@@ -98,8 +100,16 @@ async fn request_otp(
         ));
     }
 
+    // In console/demo mode, return OTP in response for easy testing
+    let is_console_mode = std::env::var("MAIL_PROVIDER").unwrap_or_default() == "console";
+
     Ok(Json(RequestOtpResponse {
-        message: "OTP sent to your email".into(),
+        message: if is_console_mode {
+            format!("Demo mode: Your OTP is {}", otp.code)
+        } else {
+            "OTP sent to your email".into()
+        },
+        otp: if is_console_mode { Some(otp.code) } else { None },
     }))
 }
 

@@ -38,8 +38,12 @@ export const useAuthStore = create<AuthState>()(
       requestOtp: async (email: string) => {
         set({ isLoading: true, error: null });
         try {
-          await accountsAPI.requestOtp(email);
+          const response = await accountsAPI.requestOtp(email);
           set({ isLoading: false });
+          // In demo mode, show OTP in alert
+          if (response.otp) {
+            alert(`Your OTP is ${response.otp}`);
+          }
           return true;
         } catch (e) {
           set({ isLoading: false, error: (e as Error).message });

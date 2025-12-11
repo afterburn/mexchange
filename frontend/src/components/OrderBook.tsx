@@ -61,18 +61,16 @@ const BidRow = memo(function BidRow({
 
 const SpreadRow = memo(function SpreadRow({
   midPriceStr,
-  spreadStr,
   spreadPercentStr,
 }: {
   midPriceStr: string;
-  spreadStr: string;
   spreadPercentStr: string;
 }) {
   return (
     <div className="border-t border-b border-white/10 py-2 px-3 bg-white/5 flex justify-between items-center">
       <span className="text-sm font-semibold text-white">{midPriceStr}</span>
       <span className="text-xs text-white/40">
-        Spread: {spreadStr} ({spreadPercentStr} bps)
+        {spreadPercentStr} bps
       </span>
     </div>
   );
@@ -284,7 +282,6 @@ const OrderBook = memo(function OrderBook({ bids, asks, maxLevels = 20 }: OrderB
                     <SpreadRow
                       key="spread"
                       midPriceStr={row.spreadInfo.midPriceStr}
-                      spreadStr={row.spreadInfo.spreadStr}
                       spreadPercentStr={row.spreadInfo.spreadPercentStr}
                     />
                   );

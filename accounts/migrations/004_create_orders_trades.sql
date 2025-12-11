@@ -2,7 +2,6 @@
 CREATE TABLE IF NOT EXISTS orders (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    exchange_order_id BIGINT,  -- ID from matching engine
     symbol VARCHAR(20) NOT NULL,  -- e.g., 'KCN/EUR'
     side VARCHAR(4) NOT NULL CHECK (side IN ('bid', 'ask')),
     order_type VARCHAR(10) NOT NULL CHECK (order_type IN ('limit', 'market')),
@@ -18,7 +17,6 @@ CREATE TABLE IF NOT EXISTS orders (
 
 CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders(user_id);
 CREATE INDEX IF NOT EXISTS idx_orders_user_status ON orders(user_id, status);
-CREATE INDEX IF NOT EXISTS idx_orders_exchange_order_id ON orders(exchange_order_id) WHERE exchange_order_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_orders_symbol_status ON orders(symbol, status);
 
 -- Trades table: records all executed trades
