@@ -70,7 +70,7 @@ const SpreadRow = memo(function SpreadRow({
     <div className="border-t border-b border-white/10 py-2 px-3 bg-white/5 flex justify-between items-center">
       <span className="text-sm font-semibold text-white">{midPriceStr}</span>
       <span className="text-xs text-white/40">
-        {spreadPercentStr} bps
+        Spread {spreadPercentStr} bps
       </span>
     </div>
   );

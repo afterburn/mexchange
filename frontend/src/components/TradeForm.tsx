@@ -244,6 +244,12 @@ const TradeForm = memo(function TradeForm({ onPlaceOrder, bestBid, bestAsk, bala
               <span className="text-white/60">5% (max €{(bestAsk * 1.05).toFixed(2)}/KCN)</span>
             </div>
           )}
+          {orderType === 'Market' && side === 'Ask' && bestBid && (
+            <div className="flex justify-between">
+              <span>Slippage</span>
+              <span className="text-white/60">5% (min €{(bestBid * 0.95).toFixed(2)}/KCN)</span>
+            </div>
+          )}
         </div>
       </form>
     </div>

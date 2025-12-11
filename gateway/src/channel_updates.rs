@@ -1,22 +1,28 @@
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 use crate::events::{DeltaAction, MarketEvent, Side};
 use crate::websocket::{ChannelNotification, NotificationData, PriceLevelChange, Stats24h, TradeData};
+
+const TWENTY_FOUR_HOURS_MS: u64 = 24 * 60 * 60 * 1000;
+
+/// A trade record for 24h stats calculation
+#[derive(Clone)]
+struct StatsTradeRecord {
+    price: f64,
+    quantity: f64,
+    timestamp: u64,
+}
 
 pub struct OrderBookState {
     bids: BTreeMap<Decimal, Decimal>,
     asks: BTreeMap<Decimal, Decimal>,
     last_trades: Vec<TradeData>,
     last_sequence: u64,
-    // 24h stats tracking
-    high_24h: f64,
-    low_24h: f64,
-    volume_24h: f64,
-    open_24h: f64,
+    /// Rolling window of trades for 24h stats (ordered by timestamp)
+    stats_trades: VecDeque<StatsTradeRecord>,
     last_price: f64,
-    first_trade_seen: bool,
 }
 
 impl OrderBookState {
@@ -26,42 +32,65 @@ impl OrderBookState {
             asks: BTreeMap::new(),
             last_trades: Vec::new(),
             last_sequence: 0,
-            high_24h: 0.0,
-            low_24h: 0.0,
-            volume_24h: 0.0,
-            open_24h: 0.0,
+            stats_trades: VecDeque::new(),
             last_price: 0.0,
-            first_trade_seen: false,
         }
     }
 
-    fn update_stats(&mut self, price: f64, quantity: f64) {
-        if !self.first_trade_seen {
-            self.open_24h = price;
-            self.high_24h = price;
-            self.low_24h = price;
-            self.first_trade_seen = true;
-        } else {
-            if price > self.high_24h {
-                self.high_24h = price;
-            }
-            if price < self.low_24h {
-                self.low_24h = price;
+    /// Remove trades older than 24 hours from the stats window
+    fn expire_old_trades(&mut self, current_timestamp: u64) {
+        let cutoff = current_timestamp.saturating_sub(TWENTY_FOUR_HOURS_MS);
+        while let Some(front) = self.stats_trades.front() {
+            if front.timestamp < cutoff {
+                self.stats_trades.pop_front();
+            } else {
+                break;
             }
         }
+    }
+
+    fn update_stats(&mut self, price: f64, quantity: f64, timestamp: u64) {
+        // Add new trade to the rolling window
+        self.stats_trades.push_back(StatsTradeRecord {
+            price,
+            quantity,
+            timestamp,
+        });
         self.last_price = price;
-        self.volume_24h += quantity;
+
+        // Expire old trades
+        self.expire_old_trades(timestamp);
     }
 
     fn get_stats_24h(&self) -> Option<Stats24h> {
-        if !self.first_trade_seen {
+        if self.stats_trades.is_empty() {
             return None;
         }
+
+        // Calculate stats from the rolling window
+        let mut high_24h = f64::MIN;
+        let mut low_24h = f64::MAX;
+        let mut volume_24h = 0.0;
+
+        for trade in &self.stats_trades {
+            if trade.price > high_24h {
+                high_24h = trade.price;
+            }
+            if trade.price < low_24h {
+                low_24h = trade.price;
+            }
+            // Volume is price × quantity (total value traded in quote currency)
+            volume_24h += trade.price * trade.quantity;
+        }
+
+        // Open price is the first trade in the 24h window
+        let open_24h = self.stats_trades.front().map(|t| t.price).unwrap_or(0.0);
+
         Some(Stats24h {
-            high_24h: self.high_24h,
-            low_24h: self.low_24h,
-            volume_24h: self.volume_24h,
-            open_24h: self.open_24h,
+            high_24h,
+            low_24h,
+            volume_24h,
+            open_24h,
             last_price: self.last_price,
         })
     }
@@ -196,8 +225,8 @@ impl OrderBookState {
                 let price_f64 = price.to_f64().unwrap_or(0.0);
                 let quantity_f64 = quantity.to_f64().unwrap_or(0.0);
 
-                // Update 24h stats
-                self.update_stats(price_f64, quantity_f64);
+                // Update 24h stats with timestamp for rolling window
+                self.update_stats(price_f64, quantity_f64, *timestamp);
 
                 let trade = TradeData {
                     price: price_f64,

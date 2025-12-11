@@ -92,6 +92,20 @@ function App() {
           count: 1,
         });
       }
+
+      // Update open orders state in real-time for partial fills
+      setApiOrders(prev => prev.map(order => {
+        if (order.id === matchedOrderId) {
+          const newFilledQty = parseFloat(order.filled_quantity) + trade.quantity;
+          const totalQty = parseFloat(order.quantity);
+          return {
+            ...order,
+            filled_quantity: newFilledQty.toString(),
+            status: newFilledQty >= totalQty ? 'filled' : 'partially_filled',
+          };
+        }
+        return order;
+      }));
     }
   }, []);
 
